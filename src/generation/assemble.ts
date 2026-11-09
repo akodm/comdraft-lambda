@@ -99,6 +99,8 @@ const linkNumber = (link: PreparedLink): number => Number(link.id.slice(1));
 // 모델이 쓴 글은 지우지 않고 이스케이프해서 링크, 이미지, HTML, 코드 블록, 지시문을 만들 수 없게 한다.
 // 줄 맨 앞에서 한 글자만 이스케이프해야 하는 곳에 두는 임시 표지 (escapeProse 가 `\` 로 바꾼다).
 const ESC_MARK = '\uE002';
+// 줄머리 인용 표시(>)는 이스케이프하지 않도록 두는 표지 (escapeProse 가 `>` 로 되돌린다).
+const QUOTE_MARK = '\uE003';
 const CONTAINER = /^(?:[ \t]*(?:>|(?:[-*+]|\d{1,9}[.)])(?=[ \t])))*/;
 const LIST_ITEM = /^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]/;
 
@@ -122,7 +124,7 @@ const neutralizeBlocks = (text: string): string => {
       if (/^(?:~{3,}|:{3,})/.test(rest) || /^=+[ \t]*$/.test(rest)) rest = ESC_MARK + rest;
       if (listLine) inList = true;
       else if (cap3(ws).length < 2 && prefix === '') inList = false;
-      return prefix + cap3(ws) + rest;
+      return prefix.replace(/>/g, QUOTE_MARK) + cap3(ws) + rest;
     })
     .join('\n');
 };
@@ -188,7 +190,8 @@ const splitLine = (line: string, corpus: string): Piece[] => {
 
 // B: 링크·이미지·HTML·자동 링크를 만드는 문자를 이스케이프한다.
 const escapeProse = (text: string): string =>
-  text.replace(/[\\[\]<>`]/g, '\\$&').replace(new RegExp(ESC_MARK, 'g'), '\\');
+  text.replace(/[\\[\]<>`]/g, '\\$&').replace(new RegExp(ESC_MARK, 'g'), '\\')
+    .replace(new RegExp(QUOTE_MARK, 'g'), '>');
 
 // C: 맨 URL 과 www 자동 링크를 지운다. 자리표시자, 백틱, 괄호 앞에서 멈춘다.
 const URL_BODY = String.raw`[^\s<>()\[\]{}\\`+'`'+String.raw`]*`;
@@ -265,7 +268,7 @@ const renderReferences = (links: PreparedLink[], cited: Set<string>, heading: st
 
 // 작성 모델의 Markdown 을 최종 초안으로 만든다. 모델이 쓴 글은 이스케이프로 무력화하고, 코드·URL·빈칸은 우리가 넣는다.
 export const assemble = (input: AssembleInput): string => {
-  const raw = input.markdown.replace(/\r\n?/g, '\n').replace(/[\uE000-\uE002]/g, '');
+  const raw = input.markdown.replace(/\r\n?/g, '\n').replace(/[\uE000-\uE003]/g, '');
   const sub: Substitution = { blocks: [], cited: new Set() };
   const text = renderModelText(raw, input, sub);
   const tidy = text

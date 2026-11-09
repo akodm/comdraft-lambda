@@ -263,6 +263,21 @@ describe('assemble', () => {
       assert.ok(out.includes('- [\\<img src=x onerror=alert(1)\\> \\*t\\*](https://ex.com/a)'), out);
     });
 
+    it('인용 블록은 유지하고 안의 내용은 무력화한다', () => {
+      assert.equal(probe('> 핵심 사실 문장'), '> 핵심 사실 문장');
+      assert.equal(probe('> > 중첩\n- > 목록 안'), '> > 중첩\n- > 목록 안');
+      assert.equal(probe('> [x](http:/\\/evil.com)'), '> \\[x\\](http:/\\\\/evil.com)');
+      assert.equal(probe('> :::blank {kind="lesson"}'), '> \\:::blank {kind="lesson"}');
+      assert.equal(probe('> ~~~\n> x'), '> \\~~~\n> x');
+      assert.equal(probe('> ```js\n> x'), '> \\`\\`\\`js\n> x');
+      assert.equal(probe('> <b>x</b>'), '> \\<b\\>x\\</b\\>');
+      assertInert(probe('> [x](http:/\\/evil.com)\n> > <i>'));
+    });
+
+    it('줄 중간의 > 는 이스케이프한다', () => {
+      assert.equal(probe('a > b'), 'a \\> b');
+    });
+
     it('목록 들여쓰기와 중첩 목록은 유지한다', () => {
       assert.equal(probe('- a\n  - b\n    - c'), '- a\n  - b\n    - c');
     });
