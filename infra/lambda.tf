@@ -21,7 +21,8 @@ data "aws_iam_policy_document" "lambda_assume" {
 }
 
 resource "aws_iam_role" "lambda" {
-  name               = "${var.name}-lambda"
+  # Terraform 용 IAM 사용자의 권한 범위(role/terraform-lambda-*)에 맞춘 이름
+  name               = "terraform-lambda-${var.name}"
   assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
 }
 
