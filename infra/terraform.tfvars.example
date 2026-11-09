@@ -1,0 +1,8 @@
+# 복사해서 infra/terraform.tfvars 로 만든 뒤 값을 채움 (terraform.tfvars 는 git 에서 제외됨)
+aws_profile = "comdraft-main-iam"
+
+# Supabase Supavisor 트랜잭션 풀러(6543), comdraft 계정 (comdraft 프로젝트 .env.production 의 DATABASE_URL 과 같은 값)
+database_url = "postgresql://comdraft.<project-ref>:<password>@aws-0-ap-northeast-2.pooler.supabase.com:6543/postgres"
+
+supabase_url             = "https://<project-ref>.supabase.co"
+supabase_publishable_key = "sb_publishable_..."

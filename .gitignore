@@ -1,0 +1,18 @@
+node_modules
+dist
+
+# 환경 변수
+.env*
+
+# Terraform (상태 파일에 Lambda 환경 변수 등 민감 정보가 평문으로 들어감)
+infra/.terraform/
+infra/*.tfstate
+infra/*.tfstate.*
+infra/*.tfvars
+!infra/terraform.tfvars.example
+infra/build/
+infra/crash.log
+# 저장한 plan 파일에도 변수 값이 들어감
+infra/tfplan
+
+.DS_Store
