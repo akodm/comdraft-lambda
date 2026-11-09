@@ -101,30 +101,86 @@ const linkNumber = (link: PreparedLink): number => Number(link.id.slice(1));
 const ESC_MARK = '\uE002';
 // 줄머리 인용 표시(>)는 이스케이프하지 않도록 두는 표지 (escapeProse 가 `>` 로 되돌린다).
 const QUOTE_MARK = '\uE003';
-const CONTAINER = /^(?:[ \t]*(?:>|(?:[-*+]|\d{1,9}[.)])(?=[ \t])))*/;
-const LIST_ITEM = /^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]/;
+// 줄머리 공백의 칸 수 (탭은 다음 4의 배수 칸까지)
+const takeIndent = (text: string, col: number): { width: number; length: number } => {
+  let width = 0;
+  let length = 0;
+  while (text[length] === ' ' || text[length] === '\t') {
+    width += text[length] === ' ' ? 1 : 4 - ((col + width) % 4);
+    length += 1;
+  }
+  return { width, length };
+};
 
-const cap3 = (ws: string): string =>
-  ' '.repeat(Math.min(3, [...ws].reduce((n, c) => n + (c === '\t' ? 4 : 1), 0)));
+const LIST_MARKER = /^([-*+]|\d{1,9}[.)])(?=[ \t]|$)/;
 
-// D: 줄 단위로 울타리(~~~), 지시문(:::), setext 밑줄, 들여쓰기 코드를 무력화한다.
+// 열려 있는 컨테이너. 인용(>) 이거나 목록 항목(본문이 시작하는 칸 폭)
+type Frame = { kind: 'quote' } | { kind: 'list'; width: number };
+
+// D: 줄 단위로 컨테이너(인용, 목록)를 따라가며, 어느 줄도 바깥 컨테이너 본문 칸보다 4칸 이상 들여쓰지 못하게 해
+// 들여쓰기 코드 블록을 막는다. 합법적인 중첩 목록, 목록 안 인용은 그대로 둔다.
+// 울타리(~~~), 지시문(:::), setext 밑줄은 첫 글자를 이스케이프한다.
 // 백틱 울타리는 아래 조각 분해에서 짝 없는 백틱이 글자로 남으며 함께 막힌다.
 const neutralizeBlocks = (text: string): string => {
-  let inList = false;
+  let frames: Frame[] = [];
   return text
     .split('\n')
     .map((line) => {
       if (line.trim() === '') return '';
-      const listLine = LIST_ITEM.test(line);
-      let prefix = CONTAINER.exec(line)?.[0] ?? '';
-      if (listLine && !inList) prefix = prefix.replace(/^[ \t]+/, (ws) => cap3(ws));
-      const after = line.slice(CONTAINER.exec(line)?.[0].length ?? 0);
-      const ws = /^[ \t]*/.exec(after)?.[0] ?? '';
-      let rest = after.slice(ws.length);
+      let out = '';
+      let rest = line;
+      // 1) 이어지는 컨테이너 맞추기
+      let matched = 0;
+      for (const frame of frames) {
+        const { width, length } = takeIndent(rest, out.length);
+        if (frame.kind === 'quote') {
+          if (width > 3 || rest[length] !== '>') break;
+          out += ' '.repeat(width) + QUOTE_MARK;
+          rest = rest.slice(length + 1);
+          if (rest[0] === ' ') {
+            out += ' ';
+            rest = rest.slice(1);
+          }
+        } else {
+          if (width < frame.width) break;
+          out += ' '.repeat(frame.width);
+          rest = ' '.repeat(width - frame.width) + rest.slice(length);
+        }
+        matched += 1;
+      }
+      frames = frames.slice(0, matched);
+      // 2) 남은 줄머리 공백을 3칸으로 줄이며 새 컨테이너 열기
+      for (;;) {
+        const { width, length } = takeIndent(rest, out.length);
+        const indent = Math.min(width, 3);
+        const body = rest.slice(length);
+        if (body.startsWith('>')) {
+          out += ' '.repeat(indent) + QUOTE_MARK;
+          rest = body.slice(1);
+          if (rest[0] === ' ') {
+            out += ' ';
+            rest = rest.slice(1);
+          }
+          frames.push({ kind: 'quote' });
+          continue;
+        }
+        const marker = LIST_MARKER.exec(body)?.[0];
+        if (marker) {
+          const afterMarker = takeIndent(body.slice(marker.length), out.length + indent + marker.length);
+          // 마커 뒤 공백이 5칸 이상이면 본문은 1칸 뒤에서 시작하고 나머지는 들여쓰기 코드가 된다.
+          const gap = afterMarker.width >= 5 || body.length === marker.length ? 1 : afterMarker.width;
+          out += ' '.repeat(indent) + marker + ' '.repeat(gap);
+          rest = ' '.repeat(afterMarker.width - gap) + body.slice(marker.length + afterMarker.length);
+          frames.push({ kind: 'list', width: marker.length + gap });
+          if (body.length === marker.length) break;
+          continue;
+        }
+        out += ' '.repeat(indent);
+        rest = body;
+        break;
+      }
       if (/^(?:~{3,}|:{3,})/.test(rest) || /^=+[ \t]*$/.test(rest)) rest = ESC_MARK + rest;
-      if (listLine) inList = true;
-      else if (cap3(ws).length < 2 && prefix === '') inList = false;
-      return prefix.replace(/>/g, QUOTE_MARK) + cap3(ws) + rest;
+      return out + rest;
     })
     .join('\n');
 };
@@ -190,13 +246,21 @@ const splitLine = (line: string, corpus: string): Piece[] => {
 
 // B: 링크·이미지·HTML·자동 링크를 만드는 문자를 이스케이프한다.
 const escapeProse = (text: string): string =>
-  text.replace(/[\\[\]<>`]/g, '\\$&').replace(new RegExp(ESC_MARK, 'g'), '\\')
+  text.replace(/[\\[\]<>`@]/g, '\\$&').replace(new RegExp(ESC_MARK, 'g'), '\\')
     .replace(new RegExp(QUOTE_MARK, 'g'), '>');
 
 // C: 맨 URL 과 www 자동 링크를 지운다. 자리표시자, 백틱, 괄호 앞에서 멈춘다.
 const URL_BODY = String.raw`[^\s<>()\[\]{}\\`+'`'+String.raw`]*`;
-const BARE_URL = new RegExp(String.raw`(?:https?:\/\/|(?<![\w.])www\.)` + URL_BODY, 'gi');
-const stripUrls = (text: string): string => text.replace(BARE_URL, '');
+const BARE_URL = new RegExp(String.raw`(?:(?:https?|ftp):\/\/|www\.)` + URL_BODY, 'gi');
+// 지운 자리가 이어 붙어 새 URL 이 생기지 않도록 더 지울 것이 없을 때까지 반복한다.
+const stripUrls = (text: string): string => {
+  let current = text;
+  for (;;) {
+    const next = current.replace(BARE_URL, '');
+    if (next === current) return next;
+    current = next;
+  }
+};
 
 interface Substitution {
   blocks: string[];
@@ -227,6 +291,8 @@ const renderProse = (prose: string, input: AssembleInput, sub: Substitution): st
   let last = 0;
   for (const match of text.matchAll(PLACEHOLDER)) {
     out += escapeProse(text.slice(last, match.index));
+    // 링크 바로 앞의 ! 는 이미지가 되므로 이스케이프한다.
+    if ((match[1] === 'link' || match[1] === 'commit') && out.endsWith('!')) out = `${out.slice(0, -1)}\\!`;
     out += placeholderText(match[1], match[2], input, sub);
     last = match.index + match[0].length;
   }

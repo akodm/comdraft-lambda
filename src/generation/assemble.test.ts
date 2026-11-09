@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { Lexer, type Token } from 'marked';
 import { assemble } from './assemble.ts';
 import { GenerationFailure } from '../errors.ts';
 import type { PreparedCommit, PreparedHunk } from './prepare.ts';
@@ -61,6 +62,39 @@ const run = (markdown: string, overrides: Partial<Parameters<typeof assemble>[0]
     referencesHeading: '참고',
     ...overrides,
   });
+
+// 조립 결과를 GFM 으로 읽어 코드 블록, HTML, 링크, 이미지, 정의가 우리가 넣은 것 말고는 없는지 확인한다.
+const ALLOWED_HREFS = new Set(['https://ex.com/a', 'https://github.com/x', 'https://github.com/o/r/commit/a1b2c3d4e5f6', 'https://other.dev/x', 'https://example.com/post']);
+const collectTokens = (tokens: Token[] | undefined, found: Token[]): void => {
+  for (const token of tokens ?? []) {
+    found.push(token);
+    const any = token as unknown as {
+      tokens?: Token[];
+      items?: Token[];
+      header?: { tokens: Token[] }[];
+      rows?: { tokens: Token[] }[][];
+    };
+    collectTokens(any.tokens, found);
+    collectTokens(any.items, found);
+    any.header?.forEach((cell) => collectTokens(cell.tokens, found));
+    any.rows?.forEach((row) => row.forEach((cell) => collectTokens(cell.tokens, found)));
+  }
+};
+const assertNoInjectedMarkup = (markdown: string, allowedCodeBlocks = 0): Token[] => {
+  const found: Token[] = [];
+  collectTokens(new Lexer({ gfm: true }).lex(markdown), found);
+  let codeBlocks = 0;
+  for (const token of found) {
+    if (token.type === 'code') codeBlocks += 1;
+    else if (token.type === 'link') {
+      assert.ok(ALLOWED_HREFS.has((token as unknown as { href: string }).href), `link ${token.raw} in ${markdown}`);
+    } else {
+      assert.ok(!['html', 'image', 'def'].includes(token.type), `${token.type} ${token.raw} in ${markdown}`);
+    }
+  }
+  assert.equal(codeBlocks, allowedCodeBlocks, `code blocks in ${markdown}`);
+  return found;
+};
 
 describe('assemble', () => {
   it('{{code:S1}} 을 after 모드 원문 줄로 바꾸고 언어를 붙인다', () => {
@@ -163,9 +197,9 @@ describe('assemble', () => {
   });
 
   describe('모델 글 무력화', () => {
-    const probeHunk = hunk('C1.F1.H1', [' a', '-b', '+c', '+<b>x</b>']);
+    const probeHunk = hunk('C1.F1.H1', [' a', '-b', '+c', '+<b>x</b>', '+<img src=x onerror=alert(1)>', '+```js']);
     const probeLinks: PreparedLink[] = [
-      { id: 'L1', url: 'https://ex.com/a', title: '<img src=x onerror=alert(1)> *t*', text: 'body' },
+      { id: 'L1', url: 'https://ex.com/a', title: '<img src=x onerror=alert(1)> *t* www.t.com', text: 'body www.grounded.com ">hi' },
     ];
     const probe = (value: string): string => {
       const out = run(`# T\n\nbody\n\n${value}`, {
@@ -179,15 +213,14 @@ describe('assemble', () => {
       for (let i = index - 1; i >= 0 && text[i] === '\\'; i -= 1) n += 1;
       return n % 2 === 1;
     };
-    // 이스케이프되지 않은 [ < 나 줄머리 울타리·지시문·들여쓰기 코드가 없어야 한다.
-    const assertInert = (out: string): void => {
-      for (let i = 0; i < out.length; i += 1) {
-        if ((out[i] === '[' || out[i] === '<') && !escaped(out, i)) assert.fail(`unescaped ${out[i]} in ${out}`);
+    // 이스케이프되지 않은 [ < 가 없고, GFM 으로 읽어도 주입된 마크업이 없어야 한다.
+    const assertInert = (out: string, allowedCodeBlocks = 0): void => {
+      const outsideSpans = out.replace(/(?<!\\)`[^`\n]*`/g, '');
+      for (let i = 0; i < outsideSpans.length; i += 1) {
+        const c = outsideSpans[i];
+        if ((c === '[' || c === '<') && !escaped(outsideSpans, i)) assert.fail(`unescaped ${c} in ${out}`);
       }
-      for (const line of out.split('\n')) {
-        assert.ok(!/^ {0,3}(```|~~~|:::)/.test(line), `block opener: ${line}`);
-        assert.ok(!/^( {4}|\t)/.test(line), `indented code: ${line}`);
-      }
+      assertNoInjectedMarkup(out, allowedCodeBlocks);
     };
 
     const cases: Record<string, string> = {
@@ -223,6 +256,41 @@ describe('assemble', () => {
       entityUrl: '[a\\]b](https&#58;//evil.com)',
       setext: 'Second\n======\n\ntext',
       escapedBacktickHtml: 'x \\`<b>x</b>` y',
+      nestedBracketLink2: '[a [b] c](javascript:alert(1))',
+      img: '![a](https://evil.com/i.png)',
+      refCollapsed: '[r]: /x\n\n[r][] and [r]',
+      bareWww: 'go www.evil.com now',
+      wwwAfterWord: 'xwww.evil.com and a.www.evil.com and _www.evil.com_',
+      wwwUpper: 'WWW.evil.com HTTPS://evil.com',
+      wwwJoin: 'wwwwww.evil.com ww https://x w.evil.com',
+      ftp: 'ftp://evil.com/x',
+      email: 'mail evil@phish.com now',
+      mailtoAuto: '<mailto:a@b.c>',
+      ungroundedEmailSpan: 'x `evil@phish.com` y',
+      escapedMailto: '\\<mailto:a@b.c\\>',
+      urlTrailing: 'https://evil.com\\x and www.evil.com`x',
+      urlJoin: 'wwwhttps://a(.evil.com',
+      entityLink: '&#91;x&#93;(https://evil.com)',
+      groundedHtmlSpan: 'see `<img src=x onerror=alert(1)>` ok',
+      groundedHtmlGt: 'see `">hi` ok <img src=x alt="`">hi` tail',
+      escBacktickGrounded: '\\``<img src=x onerror=alert(1)>` x',
+      deepListInList: '- a\n\n          - evil()',
+      deepListInList2: '- a\n          - evil()',
+      listQuoteDeep: '- a\n\n        > evil()',
+      quoteIndented: 'para\n\n      > evil()',
+      quoteTab: 'para\n\n\t> evil()',
+      quoteInner5: '>     evil()',
+      listMarker5: '1.     evil()',
+      quoteParaDeep: '> para\n>\n>       - evil()',
+      quoteListDeep: '> - a\n>           - evil()',
+      markerSpacesList: '-     - evil()',
+      markerSpacesList2: '1.      - evil()',
+      tabInList: '- a\n\t\t- evil()',
+      groundedFenceSpan: '```js``` and\n```js',
+      fakeDirectiveList: '- :::blank {kind="lesson"}\n  :::',
+      fakeDirectiveQuote: '> :::blank {kind="lesson"}\n> :::',
+      fakeDirectiveIndent: '   :::blank {kind="lesson"}\n   :::',
+      wwwParen: '(www.evil.com) *www.evil.com* ~www.evil.com~',
     };
     for (const [name, value] of Object.entries(cases)) {
       it(`${name} 은 링크·HTML·코드·지시문이 되지 않는다`, () => {
@@ -259,8 +327,8 @@ describe('assemble', () => {
 
     it('링크 제목의 HTML·강조 문자를 이스케이프한다', () => {
       const out = probe('{{link:L1}}');
-      assert.ok(out.startsWith('[\\<img src=x onerror=alert(1)\\> \\*t\\*](https://ex.com/a)'), out);
-      assert.ok(out.includes('- [\\<img src=x onerror=alert(1)\\> \\*t\\*](https://ex.com/a)'), out);
+      assert.ok(out.startsWith('[\\<img src=x onerror=alert(1)\\> \\*t\\* www.t.com](https://ex.com/a)'), out);
+      assert.ok(out.includes('- [\\<img src=x onerror=alert(1)\\> \\*t\\* www.t.com](https://ex.com/a)'), out);
     });
 
     it('인용 블록은 유지하고 안의 내용은 무력화한다', () => {
@@ -276,6 +344,40 @@ describe('assemble', () => {
 
     it('줄 중간의 > 는 이스케이프한다', () => {
       assert.equal(probe('a > b'), 'a \\> b');
+    });
+
+    it('합법적인 중첩 목록과 목록 안 인용은 그대로 목록·인용으로 읽힌다', () => {
+      for (const value of [
+        '- a\n- b\n  - b1\n    - b2\n- c\n\n1. one\n2. two\n   1. two-a\n3. three',
+        '10. ten\n    - sub\n11. eleven',
+        '> - a\n>   - b',
+        '- a\n  > q',
+        '- a\n  - b\n\n    para under b\n- c',
+        '> quote line\n> second\n>\n> > nested',
+      ]) {
+        const out = probe(value);
+        assert.equal(out, value);
+        const types = assertNoInjectedMarkup(out).map((t) => t.type);
+        assert.ok(types.includes('list') || types.includes('blockquote'));
+      }
+      const nested = assertNoInjectedMarkup(probe('- a\n  > q'));
+      assert.ok(nested.some((t) => t.type === 'blockquote'));
+    });
+
+    it('링크 앞 느낌표는 이미지가 되지 않는다', () => {
+      assertNoInjectedMarkup(probe('!{{link:L1}} and !{{commit:C1}} 와 !!{{link:L1}}'));
+    });
+
+    it('www·이메일·느낌표 링크를 막는다', () => {
+      assert.equal(probe('xwww.evil.com and _www.evil.com_'), 'x and _');
+      assert.equal(probe('mail evil@phish.com'), 'mail evil\\@phish.com');
+      assert.equal(probe('x `evil@phish.com` y'), 'x evil\\@phish.com y');
+      assert.equal(probe('!{{commit:C1}}'), '\\![a1b2c3d](https://github.com/o/r/commit/a1b2c3d4e5f6)');
+    });
+
+    it('들여쓰기 코드가 되는 깊은 들여쓰기는 3칸까지만 남는다', () => {
+      assert.equal(probe('para\n\n      > evil()'), 'para\n\n   > evil()');
+      assert.equal(probe('-     - evil()'), '- ' + '   - evil()');
     });
 
     it('목록 들여쓰기와 중첩 목록은 유지한다', () => {

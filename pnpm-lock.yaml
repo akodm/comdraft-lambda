@@ -36,6 +36,9 @@ importers:
       esbuild:
         specifier: ^0.25.0
         version: 0.25.12
+      marked:
+        specifier: 17.0.6
+        version: 17.0.6
       typescript:
         specifier: ^5.8.0
         version: 5.9.3
@@ -312,6 +315,11 @@ packages:
       canvas:
         optional: true
 
+  marked@17.0.6:
+    resolution: {integrity: sha512-gB0gkNafnonOw0obSTEGZTT86IuhILt2Wfx0mWH/1Au83kybTayroZ/V6nS25mN7u8ASy+5fMhgB3XPNrOZdmA==}
+    engines: {node: '>= 20'}
+    hasBin: true
+
   nth-check@3.0.1:
     resolution: {integrity: sha512-GX0gsdbGVCgnRgbeGaubfjpBXyYRWOOCVeYh08bSQvDZqxz5ndXs1OTfAt/h36G1xvI94YIspsI0sVFqAV9+RQ==}
     engines: {node: '>=20.19.0'}
@@ -554,6 +562,8 @@ snapshots:
       html-escaper: 3.0.3
       htmlparser2: 10.1.0
       uhyphen: 0.2.0
+
+  marked@17.0.6: {}
 
   nth-check@3.0.1:
     dependencies:

@@ -29,6 +29,7 @@
     "@types/aws-lambda": "^8.10.152",
     "@types/node": "^22.15.0",
     "esbuild": "^0.25.0",
+    "marked": "17.0.6",
     "typescript": "^5.8.0"
   }
 }
