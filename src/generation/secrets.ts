@@ -15,10 +15,10 @@ const SECRET_PATTERNS: RegExp[] = [
   /(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}/,
   /[sr]k_live_[A-Za-z0-9]{16,}/,
   /AIza[0-9A-Za-z_-]{35}/,
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
+  /-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----/,
   /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/,
-  // 자격 증명이 든 접속 문자열 (postgres://user:pass@host)
-  /[a-z][a-z0-9+]*:\/\/[^\s:/@]+:[^\s@/]+@/i,
+  // 자격 증명이 든 접속 문자열 (postgres://user:pass@host, 사용자 없는 redis://:pass@host)
+  /[a-z][a-z0-9+]*:\/\/[^\s:/@]*:[^\s@/]+@/i,
   /Authorization:\s*Bearer\s+[A-Za-z0-9._~+/=-]{20,}/i,
   KEY_VALUE_PATTERN,
 ];
@@ -34,13 +34,15 @@ const GLOBAL_PATTERNS = SECRET_PATTERNS.map(
 export const redactSecrets = (text: string): string =>
   GLOBAL_PATTERNS.reduce((acc, pattern) => acc.replace(pattern, '[가림]'), text);
 
-// 이름만 남기고 본문은 넘기지 않는 파일 (.env*, *.pem, *.key, id_rsa*)
+// 이름만 남기고 본문은 넘기지 않는 파일 (.env*, *.pem, *.key, SSH 키 id_rsa*·id_ed25519*·id_ecdsa*·id_dsa*)
+const SSH_KEY_PREFIXES = ['id_rsa', 'id_ed25519', 'id_ecdsa', 'id_dsa'];
+
 export const isSecretFile = (filename: string): boolean => {
   const base = (filename.split('/').pop() ?? filename).toLowerCase();
   return (
     base.startsWith('.env') ||
     base.endsWith('.pem') ||
     base.endsWith('.key') ||
-    base.startsWith('id_rsa')
+    SSH_KEY_PREFIXES.some((prefix) => base.startsWith(prefix))
   );
 };

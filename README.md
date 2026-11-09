@@ -24,7 +24,7 @@ Next.js 서버 (comdraft) ──SigV4──▶ API Gateway (REST, IAM 인증, �
 pnpm install
 pnpm typecheck
 pnpm test
-pnpm build   # dist/index.mjs
+pnpm build   # dist/index.mjs 를 만든 뒤 번들을 불러와 보는 smoke 검사(pnpm smoke)까지 실행
 ```
 
 ## 환경 변수
@@ -76,7 +76,7 @@ Lambda 환경 변수는 Terraform(`infra/lambda.tf`)이 주입함. 값은 git �
 
 - 런타임은 `nodejs22.x`: undici 8 이 Node 22.19 이상을 요구하므로, 배포 전에 AWS 의 nodejs22.x 런타임 패치 버전이 22.19 이상인지 확인할 것
 
-- `infra/terraform.tfstate` 에 Lambda 환경 변수(DB 주소 등)가 평문으로 저장됨: 공유하거나 커밋하지 않음
+- `infra/terraform.tfstate` 에 Lambda 환경 변수(DB 주소, `ANTHROPIC_API_KEY` 등)가 평문으로 저장됨: 공유하거나 커밋하지 않음
 - Lambda 실행 시간 제한(`lambda_timeout_seconds`)과 비동기 대기 시간(`lambda_max_event_age_seconds`)은
   comdraft 의 `GENERATION_LAMBDA_TIMEOUT_MS`, `GENERATION_QUEUED_TIMEOUT_MS` 와 맞출 것
 - 신규 계정은 Lambda 계정 동시성 한도가 10 이라 예약 동시성을 걸 수 없음: 한도 상향 전까지 `lambda_reserved_concurrency = -1`

@@ -4,6 +4,10 @@ import { z } from 'zod';
 export const BLANK_KINDS = ['motivation', 'result', 'lesson', 'detail'] as const;
 export type BlankKind = (typeof BLANK_KINDS)[number];
 
+// 코드 조각 표시 방식. 기본값은 after (바뀐 뒤 코드)
+export const CODE_MODES = ['after', 'diff'] as const;
+export type CodeMode = (typeof CODE_MODES)[number];
+
 // 모델이 가리킬 수 있는 근거 번호: 커밋(파일·hunk 포함), 링크, 요청 문구
 export const EVIDENCE_PATTERN = /^(C\d+(\.F\d+\.H\d+)?|L\d+|R)$/;
 
@@ -45,7 +49,8 @@ export const AnalysisSchema = z.object({
       from: z.string(),
       startLine: z.number().int(),
       endLine: z.number().int(),
-      mode: z.enum(['after', 'diff']),
+      // 구조화 출력은 enum 을 서버에서 강제하지 않아(설명으로만 옮김) 문자열로 받고 검증 코드에서 보정한다
+      mode: z.string(),
       point: z.string(),
     }),
   ),
@@ -53,11 +58,19 @@ export const AnalysisSchema = z.object({
     z.object({
       id: z.string(),
       section: z.number().int(),
-      kind: z.enum(BLANK_KINDS),
+      kind: z.string(),
       ask: z.string(),
     }),
   ),
 });
 
 export type Plan = z.infer<typeof PlanSchema>;
-export type Analysis = z.infer<typeof AnalysisSchema>;
+// 모델이 돌려준 그대로의 분석 결과 (mode·kind 가 목록 밖일 수 있음)
+export type RawAnalysis = z.infer<typeof AnalysisSchema>;
+
+// 검증을 거친 분석 결과 (mode·kind 를 목록 안의 값으로 보정함)
+export interface Analysis {
+  facts: RawAnalysis['facts'];
+  code: (Omit<RawAnalysis['code'][number], 'mode'> & { mode: CodeMode })[];
+  unknowns: (Omit<RawAnalysis['unknowns'][number], 'kind'> & { kind: BlankKind })[];
+}

@@ -491,3 +491,63 @@ describe('assemble', () => {
     });
   });
 });
+
+describe('assemble 표·URL 괄호', () => {
+  // comdraft 편집기에는 표 확장이 없어 표가 통째로 사라지므로 표가 생기지 않게 한다
+  const lexTypes = (markdown: string): string[] => {
+    const found: Token[] = [];
+    collectTokens(new Lexer({ gfm: true }).lex(markdown), found);
+    return found.map((token) => token.type);
+  };
+
+  it('모델이 쓴 표는 표가 되지 않고 글자로 남는다', () => {
+    const out = run('# T\n\n| a | b |\n|---|---|\n| 1 | 2 |');
+    assert.equal(lexTypes(out).includes('table'), false, out);
+    assert.equal(out, '# T\n\n\\| a \\| b \\|\n\\|---\\|---\\|\n\\| 1 \\| 2 \\|');
+  });
+
+  it('세로선 없는 정렬 줄(:---)로도 한 칸짜리 표가 생기지 않는다', () => {
+    for (const row of [':---', '---:', ':-:', '  :--']) {
+      const out = run(`# T\n\na\n${row}`);
+      assert.equal(lexTypes(out).includes('table'), false, out);
+      assert.ok(out.includes('a\n'), out);
+    }
+  });
+
+  it('세로선은 그대로 두고 --- 구분선과 제목 밑줄은 건드리지 않는다', () => {
+    assert.equal(run('# T\n\nx\n\n---\n\ny'), '# T\n\nx\n\n---\n\ny');
+  });
+
+  it('세로선이 든 근거 있는 인라인 코드가 줄에 있어도 표가 생기지 않는다', () => {
+    const pipeHunk = hunk('C1.F1.H1', ['+a|b', '+x|---|y', '+|---|']);
+    for (const markdown of [
+      'h | `a|b` | h\n|---|---|---|\n1 | 2 | 3',
+      'h | `a|b` | h\n|---|---|---|---|\n1 | 2 | 3 | 4',
+      'h | h | h\n`x|---|y`\n1 | 2 | 3',
+      'h\n`|---|`',
+    ]) {
+      const out = run(`# T\n\n${markdown}`, { hunks: new Map([[pipeHunk.id, pipeHunk]]) });
+      assert.equal(lexTypes(out).includes('table'), false, out);
+      assert.ok(out.includes('`'), out);
+    }
+  });
+
+  it('링크 제목의 세로선을 이스케이프한다', () => {
+    const out = run('# T\n\n{{link:L1}}', {
+      links: [{ id: 'L1', url: 'https://example.com/post', title: 'a | b', text: '' }],
+    });
+    assert.ok(out.includes('[a \\| b](https://example.com/post)'), out);
+  });
+
+  it('URL 의 괄호는 인코딩해 짝이 맞지 않는 ) 가 링크를 끊지 못한다', () => {
+    const url = 'https://ex.com/a)b(c';
+    const out = run('# T\n\n{{link:L1}}', {
+      links: [{ id: 'L1', url, title: 't', text: '' }],
+    });
+    const found: Token[] = [];
+    collectTokens(new Lexer({ gfm: true }).lex(out), found);
+    const link = found.find((token) => token.type === 'link') as unknown as { href: string; text: string };
+    assert.equal(link.href, 'https://ex.com/a%29b%28c');
+    assert.equal(link.text, 't');
+  });
+});

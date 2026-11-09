@@ -78,4 +78,19 @@ describe('secrets', () => {
     );
     assert.equal(redactSecrets('일반 메시지'), '일반 메시지');
   });
+
+  it('PGP 개인 키, 빈 사용자 접속 문자열', () => {
+    assert.equal(containsSecret('-----BEGIN PGP PRIVATE KEY BLOCK-----'), true);
+    assert.equal(containsSecret('-----BEGIN OPENSSH PRIVATE KEY-----'), true);
+    assert.equal(containsSecret('redis://:s3cretpass@cache.internal:6379'), true);
+    assert.equal(containsSecret('postgres://user:pass@db'), true);
+    assert.equal(containsSecret('see https://example.com/a:b'), false);
+  });
+
+  it('SSH 키 파일 이름 (rsa 외 형식)', () => {
+    for (const name of ['id_ed25519', 'keys/id_ed25519.pub', 'id_ecdsa', 'id_ecdsa_sk', 'id_dsa', 'ID_RSA']) {
+      assert.equal(isSecretFile(name), true, name);
+    }
+    assert.equal(isSecretFile('src/id_display.ts'), false);
+  });
 });

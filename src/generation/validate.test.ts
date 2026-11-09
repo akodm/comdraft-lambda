@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import type { PreparedHunk } from './prepare.ts';
-import type { Analysis, BlankKind, Plan } from './schemas.ts';
+import { AnalysisSchema, type Analysis, type BlankKind, type Plan } from './schemas.ts';
 import { sanitizeHint, validateAnalysis, validatePlan } from './validate.ts';
 
 const section = (level: number, extra: Partial<Plan['sections'][number]> = {}) => ({
@@ -180,5 +180,59 @@ describe('validateAnalysis', () => {
     );
     assert.deepEqual(out.facts, []);
     assert.deepEqual(out.unknowns.map((u) => [u.id, u.section]), [['U1', 1], ['U2', 0]]);
+  });
+});
+
+describe('validateAnalysis 구조화 출력 값 보정', () => {
+  // 구조화 출력은 enum 을 서버에서 강제하지 않으므로 목록 밖의 값이 올 수 있다
+  it('목록에 없는 빈칸 종류는 detail, 목록에 있는 것은 그대로', () => {
+    const p = plan([section(2), section(2)]);
+    const out = validateAnalysis(
+      {
+        facts: [],
+        code: [],
+        unknowns: [
+          { id: 'U1', section: 0, kind: 'surprise', ask: '' },
+          { id: 'U2', section: 1, kind: 'lesson', ask: '무엇을 배웠나' },
+        ],
+      },
+      ctxFor(p),
+    );
+    assert.deepEqual(
+      out.unknowns.map((u) => [u.kind, u.ask]),
+      [
+        ['detail', '자세한 내용'],
+        ['lesson', '무엇을 배웠나'],
+      ],
+    );
+  });
+
+  it('목록에 없는 코드 표시 방식은 after, diff 는 그대로', () => {
+    const p = plan([section(2)]);
+    const pick = { section: 0, from: 'C1.F1.H1', startLine: 1, endLine: 2, point: 'p' };
+    const out = validateAnalysis(
+      {
+        facts: [],
+        code: [
+          { ...pick, id: 'K1', mode: 'before' },
+          { ...pick, id: 'K2', mode: 'diff' },
+        ],
+        unknowns: [{ id: 'U1', section: 0, kind: 'detail', ask: 'q' }],
+      },
+      ctxFor(p, [hunk('C1.F1.H1', 5)]),
+    );
+    assert.deepEqual(
+      out.code.map((c) => c.mode),
+      ['after', 'diff'],
+    );
+  });
+
+  it('kind·mode 는 스키마에서 enum 으로 두지 않는다 (서버가 강제하지 않아 검증 코드에서 보정)', () => {
+    const parsed = AnalysisSchema.safeParse({
+      facts: [],
+      code: [{ id: 'K1', section: 0, from: 'x', startLine: 1, endLine: 1, mode: 'before', point: '' }],
+      unknowns: [{ id: 'U1', section: 0, kind: 'surprise', ask: '' }],
+    });
+    assert.equal(parsed.success, true);
   });
 });

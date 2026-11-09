@@ -86,6 +86,16 @@ describe('prepareCommits', () => {
     assert.equal(c.message, 'fix: [가림] 제거');
   });
 
+  it('1000자 경계에 걸친 비밀값도 자르기 전에 가린다', () => {
+    const token = 'ghp_' + 'a'.repeat(36);
+    const message = 'm'.repeat(990) + token + ' 끝';
+    const [c] = prepareCommits([commit('a', [], message)]);
+    assert.equal(c.message.includes('ghp_'), false);
+    assert.equal(c.message.includes('aaaaaa'), false);
+    assert.ok(c.message.startsWith('m'.repeat(990) + '[가림]'));
+    assert.ok(c.message.length <= 1000);
+  });
+
   it('메시지는 1000자, 파일은 50개까지', () => {
     const files = Array.from({ length: 60 }, (_, i) => file(`f${i}.ts`, PATCH));
     const [c] = prepareCommits([commit('a', files, 'm'.repeat(1500))]);

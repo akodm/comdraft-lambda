@@ -61,12 +61,14 @@ const evidenceCorpus = (input: AssembleInput): string => {
   return parts.join('\n');
 };
 
-// 링크 글자에서 Markdown 을 깨는 문자를 이스케이프한다.
+// 링크 글자에서 Markdown 을 깨는 문자를 이스케이프한다. (| 는 표 칸 구분)
 const escapeLinkText = (text: string): string =>
-  text.replace(/\s+/g, ' ').trim().replace(/[\\[\]<>`*_]/g, '\\$&');
+  text.replace(/\s+/g, ' ').trim().replace(/[\\[\]<>`*_|]/g, '\\$&');
 
+// 공백·꺾쇠·괄호를 퍼센트 인코딩한다. encodeURIComponent 는 ( ) 를 그대로 두므로 직접 바꾼다.
+const URL_ESCAPES: Record<string, string> = { '(': '%28', ')': '%29' };
 const safeUrl = (url: string): string =>
-  url.replace(/[\s()<>]/g, (c) => encodeURIComponent(c));
+  url.replace(/[\s()<>]/g, (c) => URL_ESCAPES[c] ?? encodeURIComponent(c));
 
 const hostnameOf = (url: string): string => {
   try {
@@ -218,7 +220,9 @@ const stripUrls = (text: string): string => {
   }
 };
 
-// e: 링크·이미지·HTML·자동 링크·이메일을 만드는 문자를 이스케이프한다. 줄머리 인용 표시(>)만 남겨 둔다.
+// e: 링크·이미지·HTML·자동 링크·이메일·표를 만드는 문자를 이스케이프한다. 줄머리 인용 표시(>)만 남겨 둔다.
+// 표는 comdraft 편집기가 읽지 못해 통째로 사라지므로 칸 구분(|)도 글자로 만든다.
+// 근거 있는 인라인 코드 안의 | 는 그대로지만 칸마다 백틱이 붙어 정렬 줄이 될 수 없다.
 const CONTAINER_PREFIX = /^(?:[ \t]*(?:>|(?:[-*+]|\d{1,9}[.)])(?=[ \t])))*/;
 const escapeProse = (text: string): string =>
   text
@@ -227,7 +231,7 @@ const escapeProse = (text: string): string =>
       const prefix = CONTAINER_PREFIX.exec(line)?.[0] ?? '';
       const rest = line
         .slice(prefix.length)
-        .replace(/[\\[\]<>@`]/g, '\\$&')
+        .replace(/[\\[\]<>@`|]/g, '\\$&')
         // 링크 바로 앞의 ! 는 이미지가 되므로 이스케이프한다.
         .replace(/!(?=)/g, '\\!');
       return prefix.replace(/>/g, QUOTE_MARK) + rest;
@@ -331,7 +335,9 @@ const neutralizeLines = (text: string): string => {
       }
       // 컨테이너로 쓰이지 못한 인용 표시는 글자로 남긴다.
       rest = rest.replace(//g, '\\>');
-      if (/^(?:~{3,}|:{3,})/.test(rest) || /^=+[ \t]*$/.test(rest)) rest = `\\${rest}`;
+      // 콜론이 든 정렬 줄(:---, ---:)은 세로선 없이도 한 칸짜리 표를 만든다.
+      const alignRow = /^:?-+:?[ \t]*$/.test(rest) && rest.includes(':');
+      if (/^(?:~{3,}|:{3,})/.test(rest) || /^=+[ \t]*$/.test(rest) || alignRow) rest = `\\${rest}`;
       return out + rest;
     })
     .join('\n');
@@ -343,8 +349,8 @@ const tidy = (text: string): string =>
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 
-// g: 결과를 GFM 으로 읽어 코드 블록, HTML, 링크, 이미지, 정의, 줄머리 울타리·지시문이 있는지 본다 (표지 자리는 평범한 글로 바꿔 읽는다).
-const FORBIDDEN_TOKENS = new Set(['code', 'html', 'link', 'image', 'def']);
+// g: 결과를 GFM 으로 읽어 코드 블록, HTML, 링크, 이미지, 정의, 표, 줄머리 울타리·지시문이 있는지 본다 (표지 자리는 평범한 글로 바꿔 읽는다).
+const FORBIDDEN_TOKENS = new Set(['code', 'html', 'link', 'image', 'def', 'table']);
 const hasForbiddenToken = (tokens: Token[] | undefined): boolean =>
   (tokens ?? []).some((token) => {
     const nested = token as unknown as {

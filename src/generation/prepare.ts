@@ -149,7 +149,8 @@ export const prepareCommits = (commits: CommitDetail[]): PreparedCommit[] =>
       id,
       sha: commit.sha,
       htmlUrl: commit.htmlUrl,
-      message: redactSecrets(commit.message.slice(0, MAX_MESSAGE_CHARS)),
+      // 자르기 전에 가려야 경계에 걸친 비밀값의 앞부분이 남지 않는다
+      message: redactSecrets(commit.message).slice(0, MAX_MESSAGE_CHARS),
       files: commit.files
         .slice(0, MAX_CATALOG_FILES_PER_COMMIT)
         .map((file, fileIndex) => prepareFile(id, fileIndex, file)),

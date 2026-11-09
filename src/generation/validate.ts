@@ -1,11 +1,15 @@
 import { MAX_CODE_LINES } from './limits.ts';
 import type { PreparedHunk } from './prepare.ts';
 import {
+  BLANK_KINDS,
+  CODE_MODES,
   EVIDENCE_PATTERN,
   SECTION_RANGE,
   type Analysis,
   type BlankKind,
+  type CodeMode,
   type Plan,
+  type RawAnalysis,
 } from './schemas.ts';
 
 const HINT_MAX = 80;
@@ -23,6 +27,13 @@ export const sanitizeHint = (text: string): string => {
     .trim();
   return Array.from(cleaned).slice(0, HINT_MAX).join('').trim();
 };
+
+// 목록 밖의 값은 기본값으로 (comdraft normalizeBlankAttrs 와 같은 규칙)
+const toBlankKind = (kind: string): BlankKind =>
+  (BLANK_KINDS as readonly string[]).includes(kind) ? (kind as BlankKind) : 'detail';
+
+const toCodeMode = (mode: string): CodeMode =>
+  (CODE_MODES as readonly string[]).includes(mode) ? (mode as CodeMode) : 'after';
 
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(Math.max(value, min), max);
@@ -70,7 +81,7 @@ const isKnownEvidence = (
 };
 
 const isValidCodePick = (
-  pick: Analysis['code'][number],
+  pick: RawAnalysis['code'][number],
   hunks: Map<string, PreparedHunk>,
 ): boolean => {
   const hunk = hunks.get(pick.from);
@@ -80,16 +91,17 @@ const isValidCodePick = (
   return pick.endLine - pick.startLine + 1 <= MAX_CODE_LINES;
 };
 
-const maxUnknownNumber = (unknowns: Analysis['unknowns']): number =>
+const maxUnknownNumber = (unknowns: RawAnalysis['unknowns']): number =>
   unknowns.reduce((max, u) => {
     const match = /^U(\d+)$/.exec(u.id);
     return match ? Math.max(max, Number(match[1])) : max;
   }, 0);
 
 // 근거 없는 사실, 잘못된 코드 위치를 버리고 빈칸 문구를 정리한다.
+// 목록 밖의 코드 표시 방식은 after, 빈칸 종류는 detail 로 바꾼다.
 // 사실도 unknown 도 없는 절에는 detail 빈칸을 만든다.
 export const validateAnalysis = (
-  analysis: Analysis,
+  analysis: RawAnalysis,
   ctx: {
     plan: Plan;
     hunks: Map<string, PreparedHunk>;
@@ -114,14 +126,18 @@ export const validateAnalysis = (
 
   const code = analysis.code
     .filter((pick) => inRange(pick.section) && isValidCodePick(pick, ctx.hunks))
-    .map((pick) => ({ ...pick }));
+    .map((pick) => ({ ...pick, mode: toCodeMode(pick.mode) }));
 
   const unknowns = analysis.unknowns
     .filter((unknown) => inRange(unknown.section))
-    .map((unknown) => ({
-      ...unknown,
-      ask: sanitizeHint(unknown.ask) || ctx.blankDefaults[unknown.kind],
-    }));
+    .map((unknown) => {
+      const kind = toBlankKind(unknown.kind);
+      return {
+        ...unknown,
+        kind,
+        ask: sanitizeHint(unknown.ask) || ctx.blankDefaults[kind],
+      };
+    });
 
   let nextUnknown = maxUnknownNumber(analysis.unknowns) + 1;
   for (let section = 0; section < sectionCount; section += 1) {

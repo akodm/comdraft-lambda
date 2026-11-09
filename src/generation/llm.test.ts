@@ -1,12 +1,30 @@
 import type Anthropic from '@anthropic-ai/sdk';
+import {
+  APIConnectionError,
+  APIConnectionTimeoutError,
+  APIError,
+  APIUserAbortError,
+} from '@anthropic-ai/sdk';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { z } from 'zod';
 
 import { GenerationFailure } from '../errors.ts';
-import { createAnthropicLlm, GENERATION_MODEL, LLM_TIMEOUT_MS } from './llm.ts';
+import {
+  createAnthropicLlm as createLlm,
+  GENERATION_MODEL,
+  LLM_TIMEOUT_MS,
+  MIN_CALL_MS,
+  SAFETY_MARGIN_MS,
+  type LlmOptions,
+} from './llm.ts';
 
 type Req = Record<string, any>;
+
+// 시간이 넉넉한 기본 옵션 (재시도 대기는 기다리지 않는다)
+const PLENTY_MS = 10 * 60_000;
+const createAnthropicLlm = (client: Anthropic, options: Partial<LlmOptions> = {}) =>
+  createLlm(client, { remainingTimeMs: () => PLENTY_MS, sleep: async () => {}, ...options });
 
 // 가짜 SDK 클라이언트: 받은 요청과 옵션을 기록하고 정해 둔 응답(또는 오류)을 돌려준다
 const fakeClient = (reply: () => unknown) => {
@@ -62,6 +80,8 @@ describe('createAnthropicLlm.parse', () => {
     assert.equal('top_k' in req, false);
     assert.equal('thinking' in req, false);
     assert.equal(options.timeout, LLM_TIMEOUT_MS);
+    assert.equal(options.maxRetries, 0);
+    assert.ok(options.signal instanceof AbortSignal);
   });
 
   for (const stop_reason of ['refusal', 'max_tokens']) {
@@ -107,6 +127,8 @@ describe('createAnthropicLlm.write', () => {
     assert.equal('temperature' in req, false);
     assert.equal('thinking' in req, false);
     assert.equal(options.timeout, LLM_TIMEOUT_MS);
+    assert.equal(options.maxRetries, 0);
+    assert.ok(options.signal instanceof AbortSignal);
   });
 
   for (const stop_reason of ['refusal', 'max_tokens']) {
@@ -133,4 +155,133 @@ describe('createAnthropicLlm.write', () => {
     });
     await rejectsLlmFailed(createAnthropicLlm(client).write(writeReq));
   });
+});
+
+const okParse = () => ({ stop_reason: 'end_turn', parsed_output: { answer: 'ok' } });
+const okWrite = () => ({ stop_reason: 'end_turn', content: [{ type: 'text', text: '글' }] });
+
+const rejectsTimeout = async (promise: Promise<unknown>) =>
+  assert.rejects(promise, (error) => {
+    assert.ok(error instanceof GenerationFailure);
+    assert.equal(error.code, 'timeout');
+    return true;
+  });
+
+// 차례대로 오류를 던지다가 다 쓰면 성공 응답을 돌려준다
+const failThen = (errors: unknown[], success: () => unknown) => {
+  let index = 0;
+  return () => {
+    if (index < errors.length) {
+      index += 1;
+      throw errors[index - 1];
+    }
+    return success();
+  };
+};
+
+const overloaded = () => APIError.generate(529, undefined, 'overloaded', new Headers());
+
+describe('createAnthropicLlm 시간 예산', () => {
+  for (const [method, run, ok] of [
+    ['parse', (llm: ReturnType<typeof createLlm>) => llm.parse(parseReq), okParse],
+    ['write', (llm: ReturnType<typeof createLlm>) => llm.write(writeReq), okWrite],
+  ] as const) {
+    it(`${method}: 남은 시간이 최소 호출 시간보다 짧으면 호출하지 않고 timeout`, async () => {
+      const { client, calls } = fakeClient(ok);
+      const llm = createAnthropicLlm(client, {
+        remainingTimeMs: () => SAFETY_MARGIN_MS + MIN_CALL_MS - 1,
+      });
+      await rejectsTimeout(run(llm));
+      assert.equal(calls.length, 0);
+    });
+
+    it(`${method}: 남은 시간에서 여유분을 뺀 만큼만 제한 시간으로 보낸다`, async () => {
+      const { client, calls } = fakeClient(ok);
+      const llm = createAnthropicLlm(client, {
+        remainingTimeMs: () => SAFETY_MARGIN_MS + 40_000,
+      });
+      await run(llm);
+      assert.equal(calls[0].options.timeout, 40_000);
+      assert.equal(calls[0].options.maxRetries, 0);
+    });
+
+    it(`${method}: 재시도할 수 있는 오류는 시간이 넉넉하면 한 번만 다시 시도한다`, async () => {
+      const { client, calls } = fakeClient(failThen([overloaded()], ok));
+      const slept: number[] = [];
+      const llm = createAnthropicLlm(client, {
+        sleep: async (ms) => {
+          slept.push(ms);
+        },
+      });
+      await run(llm);
+      assert.equal(calls.length, 2);
+      assert.equal(slept.length, 1);
+    });
+
+    it(`${method}: 두 번째도 실패하면 더 시도하지 않고 llm_failed`, async () => {
+      const { client, calls } = fakeClient(
+        failThen([overloaded(), new APIConnectionError({ message: 'reset' }), overloaded()], ok),
+      );
+      await rejectsLlmFailed(run(createAnthropicLlm(client)));
+      assert.equal(calls.length, 2);
+    });
+
+    it(`${method}: 새 시도 한 번을 온전히 할 시간이 없으면 재시도하지 않는다`, async () => {
+      const { client, calls } = fakeClient(failThen([overloaded()], ok));
+      const llm = createAnthropicLlm(client, {
+        remainingTimeMs: () => SAFETY_MARGIN_MS + LLM_TIMEOUT_MS - 1,
+      });
+      await rejectsLlmFailed(run(llm));
+      assert.equal(calls.length, 1);
+    });
+
+    it(`${method}: 재시도할 수 없는 오류(400)는 바로 llm_failed`, async () => {
+      const { client, calls } = fakeClient(
+        failThen([APIError.generate(400, undefined, 'bad', new Headers())], ok),
+      );
+      await rejectsLlmFailed(run(createAnthropicLlm(client)));
+      assert.equal(calls.length, 1);
+    });
+
+    it(`${method}: 남은 시간 때문에 줄인 제한 시간을 넘기면 timeout`, async () => {
+      const { client, calls } = fakeClient(failThen([new APIConnectionTimeoutError()], ok));
+      const llm = createAnthropicLlm(client, {
+        remainingTimeMs: () => SAFETY_MARGIN_MS + 30_000,
+      });
+      await rejectsTimeout(run(llm));
+      assert.equal(calls.length, 1);
+    });
+
+    it(`${method}: 기한이 되면 진행 중인 요청을 끊고 timeout`, async (t) => {
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      // 신호가 끊기면 SDK 처럼 APIUserAbortError 로 거절한다
+      const waitForAbort = (options: Req) =>
+        new Promise((_resolve, reject) => {
+          options.signal.addEventListener('abort', () => reject(new APIUserAbortError()));
+        });
+      const calls: Req[] = [];
+      const client = {
+        messages: {
+          parse: (_req: Req, options: Req) => {
+            calls.push(options);
+            return waitForAbort(options);
+          },
+          stream: (_req: Req, options: Req) => {
+            calls.push(options);
+            return { finalMessage: () => waitForAbort(options) };
+          },
+        },
+      } as unknown as Anthropic;
+      const llm = createAnthropicLlm(client, {
+        remainingTimeMs: () => SAFETY_MARGIN_MS + 20_000,
+      });
+
+      const pending = run(llm);
+      t.mock.timers.tick(19_999);
+      assert.equal(calls[0].signal.aborted, false);
+      t.mock.timers.tick(1);
+      await rejectsTimeout(pending);
+      assert.equal(calls.length, 1);
+    });
+  }
 });

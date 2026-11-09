@@ -31,12 +31,14 @@ export const handler = async (
   const sql = getDatabase(config.databaseUrl);
 
   // 클라이언트와 링크 요청 함수는 호출마다 한 번만 만든다
+  // 재시도는 남은 실행 시간을 아는 createAnthropicLlm 이 직접 하므로 SDK 자동 재시도는 끈다
   const client = new Anthropic({
     apiKey: config.anthropicApiKey,
     timeout: LLM_TIMEOUT_MS,
-    maxRetries: 2,
+    maxRetries: 0,
   });
   const linkFetch = createLinkFetch();
+  const remainingTimeMs = () => context.getRemainingTimeInMillis();
 
   const outcome = await runJob(request.jobId, {
     jobs: createJobStore(sql),
@@ -46,10 +48,10 @@ export const handler = async (
     }),
     fetchCommit: createCommitFetcher(request.githubToken),
     pipeline: createClaudePipeline({
-      llm: createAnthropicLlm(client),
+      llm: createAnthropicLlm(client, { remainingTimeMs }),
       fetchLinks: (urls) => fetchReferenceLinks(urls, linkFetch),
     }),
-    remainingTimeMs: () => context.getRemainingTimeInMillis(),
+    remainingTimeMs,
   });
 
   return { outcome };
