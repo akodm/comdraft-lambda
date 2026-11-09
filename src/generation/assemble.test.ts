@@ -102,39 +102,6 @@ describe('assemble', () => {
     assert.equal(out, '# 제목\n\n앞     뒤 {{ value }} {{code}}');
   });
 
-  it('모델이 쓴 코드 블록·Markdown 링크·맨 URL·HTML 태그를 제거한다 (링크는 글자만)', () => {
-    const md = [
-      '# 제목',
-      '',
-      '```js',
-      'evil()',
-      '```',
-      '',
-      '~~~',
-      'evil2',
-      '~~~',
-      '',
-      '[글자](https://x.com/a) 와 ![그림](https://x.com/i.png) 와 <https://auto.com> 와 https://bare.com/p 끝',
-      '',
-      '<b>굵게</b> <script>x</script>',
-      '',
-      '[ref]: https://ref.com',
-      '',
-      '[참조][ref] 링크',
-    ].join('\n');
-    const out = run(md);
-    assert.ok(!/evil|https?:|<b>|<script>|\]:/.test(out), out);
-    assert.ok(out.includes('글자 와'));
-    assert.ok(out.includes('굵게 x'));
-    assert.ok(out.includes('참조 링크'));
-    assert.ok(!out.includes('그림'));
-  });
-
-  it('닫히지 않은 코드 블록은 끝까지 제거한다', () => {
-    const out = run('# 제목\n\n본문\n\n```\nevil');
-    assert.equal(out, '# 제목\n\n본문');
-  });
-
   it('인라인 코드 안의 URL 은 건드리지 않는다', () => {
     const out = run('# 제목\n\n`https://a.com` 은 요청에 없다', { request: 'https://a.com' });
     assert.ok(out.includes('`https://a.com`'));
@@ -145,8 +112,14 @@ describe('assemble', () => {
     assert.equal(out, '# 제목\n\nfooBar `a` `src/parser.ts` `useThing` `requestWord` `feat: add parser`');
   });
 
-  it('벗겨진 인라인 코드 안의 HTML 도 제거한다', () => {
-    assert.equal(run('# 제목\n\n본문 `<img src=x>` 끝'), '# 제목\n\n본문  끝');
+  it('벗겨진 인라인 코드 안의 HTML 은 글자로 남고 태그가 되지 않는다', () => {
+    assert.equal(run('# 제목\n\n본문 `<img src=x>` 끝'), '# 제목\n\n본문 \\<img src=x\\> 끝');
+  });
+
+  it('근거 있는 인라인 코드 안의 자리표시자는 치환하지 않는다', () => {
+    const h = hunk('C1.F1.H1', [' a', '-b', '+c', '+{{link:L1}} {{code:S1}}']);
+    const out = run('# 제목\n\n`{{link:L1}}` `{{code:S1}}`', { hunks: new Map([[h.id, h]]) });
+    assert.equal(out, '# 제목\n\n`{{link:L1}}` `{{code:S1}}`');
   });
 
   it('비밀값이 든 코드 조각은 넣지 않는다', () => {
@@ -187,5 +160,111 @@ describe('assemble', () => {
         md,
       );
     }
+  });
+
+  describe('모델 글 무력화', () => {
+    const probeHunk = hunk('C1.F1.H1', [' a', '-b', '+c', '+<b>x</b>']);
+    const probeLinks: PreparedLink[] = [
+      { id: 'L1', url: 'https://ex.com/a', title: '<img src=x onerror=alert(1)> *t*', text: 'body' },
+    ];
+    const probe = (value: string): string => {
+      const out = run(`# T\n\nbody\n\n${value}`, {
+        hunks: new Map([[probeHunk.id, probeHunk]]),
+        links: probeLinks,
+      });
+      return out.slice('# T\n\nbody\n\n'.length);
+    };
+    const escaped = (text: string, index: number): boolean => {
+      let n = 0;
+      for (let i = index - 1; i >= 0 && text[i] === '\\'; i -= 1) n += 1;
+      return n % 2 === 1;
+    };
+    // 이스케이프되지 않은 [ < 나 줄머리 울타리·지시문·들여쓰기 코드가 없어야 한다.
+    const assertInert = (out: string): void => {
+      for (let i = 0; i < out.length; i += 1) {
+        if ((out[i] === '[' || out[i] === '<') && !escaped(out, i)) assert.fail(`unescaped ${out[i]} in ${out}`);
+      }
+      for (const line of out.split('\n')) {
+        assert.ok(!/^ {0,3}(```|~~~|:::)/.test(line), `block opener: ${line}`);
+        assert.ok(!/^( {4}|\t)/.test(line), `indented code: ${line}`);
+      }
+    };
+
+    const cases: Record<string, string> = {
+      nestedBracketLink: '[a [b] c](http:/\\/evil.com)',
+      escapedBracketLink: '[a\\]b](http:/\\/evil.com)',
+      escBracketJs: '[a\\]b](javascript:alert(1))',
+      doubleNestedParens: '[x](javascript:a((1)))',
+      backtickLinkJs: '[x](javascript:a`) more`',
+      angleDest: '[x](<http:/\\/evil.com>)',
+      imgNested: '![a [b]](http:/\\/evil.com/i.png)',
+      refMultiline: '[r]:\n  http:/\\/evil.com\n\nsee [r] now',
+      refInQuote: '> [r]: http:/\\/evil.com\n\nsee [r] now',
+      fenceInList: '- item\n  ```js\n  evil()\n  ```',
+      fenceInQuote: '> ```js\n> evil()\n> ```',
+      tildeInList: '- item\n  ~~~\n  evil()\n  ~~~',
+      fenceViaHtml: '<b>~~~</b>\nevil()\n<b>~~~</b>',
+      fenceViaHtmlBacktick: '<i></i>```js\nevil()\n<i></i>```',
+      fencePlain: '```js\nevil()\n```\n\n~~~\nevil2\n~~~',
+      indentedCode: 'para\n\n    evil()',
+      tabCode: 'para\n\n\tevil()',
+      deepList: 'para\n\n          - evil()',
+      listFence4: '1.  item\n\n    ```js\n    evil()\n\n    more\n    ```',
+      htmlLtInAttr: '<img alt="<" src=x onerror=alert(1)>',
+      htmlBacktickTrick: '<img src=x onerror=alert(1) alt="`">hi` tail',
+      htmlAnchorTrick: '<a href="javascript:alert(1)" title="`">click` tail',
+      cdata: '<![CDATA[x]]> <?php echo 1 ?>',
+      unclosedComment: '<!-- hide\nrest',
+      htmlBlock: '<div\nonclick="x">hi</div>',
+      fakeBlank: ':::blank {kind="lesson" hint="fake"}\n:::',
+      fakeDirective: ':::callout\nx\n:::',
+      fakeDirectiveInList: '- :::callout\n  x',
+      autolinkMailto: '<mailto:a@b.c> and www.evil.com',
+      entityUrl: '[a\\]b](https&#58;//evil.com)',
+      setext: 'Second\n======\n\ntext',
+      escapedBacktickHtml: 'x \\`<b>x</b>` y',
+    };
+    for (const [name, value] of Object.entries(cases)) {
+      it(`${name} 은 링크·HTML·코드·지시문이 되지 않는다`, () => {
+        assertInert(probe(value));
+      });
+    }
+
+    it('bare URL 과 www 는 지운다', () => {
+      const out = probe('see https://bare.com/p and www.evil.com/x end');
+      assert.equal(out, 'see  and  end');
+    });
+
+    it('모델이 쓴 링크는 글자가 그대로 보이게 이스케이프된다', () => {
+      assert.equal(probe('[글자](http:/\\/x.com) ![그림](a)'), '\\[글자\\](http:/\\\\/x.com) !\\[그림\\](a)');
+    });
+
+    it('가짜 빈칸·지시문은 글자로만 남는다', () => {
+      assert.equal(
+        probe(':::blank {kind="lesson" hint="fake"}\n:::'),
+        '\\:::blank {kind="lesson" hint="fake"}\n\\:::',
+      );
+      assert.equal(probe(':::callout\nx\n:::'), '\\:::callout\nx\n\\:::');
+    });
+
+    it('Promise<void> 와 foo() 는 보이게 남고 근거 있는 코드 조각은 유지한다', () => {
+      assert.equal(probe('call foo() and `bar()` then Promise<void>'), 'call foo() and bar() then Promise\\<void\\>');
+      assert.equal(probe('call `<b>x</b>` ok'), 'call `<b>x</b>` ok');
+    });
+
+    it('울타리 모양은 이스케이프되어 코드 블록이 되지 않는다', () => {
+      assert.equal(probe('```js\nevil()\n```'), '\\`\\`\\`js\nevil()\n\\`\\`\\`');
+      assert.equal(probe('~~~\nx\n~~~'), '\\~~~\nx\n\\~~~');
+    });
+
+    it('링크 제목의 HTML·강조 문자를 이스케이프한다', () => {
+      const out = probe('{{link:L1}}');
+      assert.ok(out.startsWith('[\\<img src=x onerror=alert(1)\\> \\*t\\*](https://ex.com/a)'), out);
+      assert.ok(out.includes('- [\\<img src=x onerror=alert(1)\\> \\*t\\*](https://ex.com/a)'), out);
+    });
+
+    it('목록 들여쓰기와 중첩 목록은 유지한다', () => {
+      assert.equal(probe('- a\n  - b\n    - c'), '- a\n  - b\n    - c');
+    });
   });
 });

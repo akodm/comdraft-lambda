@@ -29,44 +29,6 @@ const fail = (): never => {
   throw new GenerationFailure('invalid_result');
 };
 
-// 1단계: 모델이 쓴 fenced 코드 블록을 통째로 지운다. 닫히지 않으면 끝까지 지운다.
-export const stripFencedBlocks = (text: string): string => {
-  const kept: string[] = [];
-  let fence: { char: string; length: number } | null = null;
-  for (const line of text.split('\n')) {
-    if (fence) {
-      const close = new RegExp(`^ {0,3}(${fence.char}{${fence.length},})[ \\t]*$`).exec(line);
-      if (close) fence = null;
-      continue;
-    }
-    const open = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
-    // 한 줄 안에서 닫히는 ```x``` 는 인라인 코드이므로 울타리가 아니다.
-    if (open && !(open[1][0] === '`' && open[2].includes('`'))) {
-      fence = { char: open[1][0], length: open[1].length };
-      continue;
-    }
-    kept.push(line);
-  }
-  return kept.join('\n');
-};
-
-// 2단계: 링크, 이미지, 맨 URL, HTML 을 지운다. 링크는 글자만 남긴다.
-const URL_PARENS = String.raw`\((?:[^()]|\([^()]*\))*\)`;
-const stripMarkup = (text: string): string =>
-  text
-    .replace(/^ {0,3}\[[^\]\n]+\]:[ \t]*\S.*$/gm, '')
-    .replace(/!\[[^\]]*\](?:\([^)]*\)|\[[^\]]*\])/g, '')
-    .replace(new RegExp(String.raw`\[([^\]]*)\]${URL_PARENS}`, 'g'), '$1')
-    .replace(/\[([^\]]+)\]\[[^\]]*\]/g, '$1')
-    .replace(/<[A-Za-z][A-Za-z0-9+.-]*:[^\s<>]*>/g, '')
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<\/?[A-Za-z][^<>]*>/g, '')
-    .replace(/https?:\/\/[^\s<>)\]]+/gi, '')
-    .replace(/\(\s*\)/g, '');
-
-// 인라인 코드 조각 (한 단락 안, 같은 길이의 백틱으로 닫힘)
-const CODE_SPAN = /(?<!`)(`+)(?!`)((?:(?!\n[ \t]*\n)[\s\S])*?[^`])\1(?!`)/g;
-
 const evidenceCorpus = (input: AssembleInput): string => {
   const parts: string[] = [input.request];
   const addHunk = (hunk: PreparedHunk): void => {
@@ -84,24 +46,9 @@ const evidenceCorpus = (input: AssembleInput): string => {
   return parts.join('\n');
 };
 
-// 2~3단계: 인라인 코드 조각을 빼 두고 링크·URL·HTML 을 지운 뒤, 근거 없는 조각은 백틱을 벗겨 되돌린다.
-const cleanProse = (text: string, corpus: string): string => {
-  const spans: string[] = [];
-  const stashed = text.replace(CODE_SPAN, (whole, _ticks: string, content: string) => {
-    const trimmed = content.trim();
-    const grounded = trimmed !== '' && corpus.includes(trimmed);
-    spans.push(grounded ? whole : stripMarkup(content));
-    return `${MARK_OPEN}s${spans.length - 1}${MARK_CLOSE}`;
-  });
-  return stripMarkup(stashed).replace(
-    /s(\d+)/g,
-    (_whole, index: string) => spans[Number(index)],
-  );
-};
-
 // 링크 글자에서 Markdown 을 깨는 문자를 이스케이프한다.
 const escapeLinkText = (text: string): string =>
-  text.replace(/\s+/g, ' ').trim().replace(/[\\[\]]/g, '\\$&');
+  text.replace(/\s+/g, ' ').trim().replace(/[\\[\]<>`*_]/g, '\\$&');
 
 const safeUrl = (url: string): string =>
   url.replace(/[\s()<>]/g, (c) => encodeURIComponent(c));
@@ -149,30 +96,154 @@ const renderBlank = (id: string, input: AssembleInput): string | null => {
 
 const linkNumber = (link: PreparedLink): number => Number(link.id.slice(1));
 
-// 4~5단계: 블록형은 표지로 바꿔 독립 블록으로 빼고, 인라인형은 그 자리에서 바꾼다.
-const substitute = (
-  text: string,
+// 모델이 쓴 글은 지우지 않고 이스케이프해서 링크, 이미지, HTML, 코드 블록, 지시문을 만들 수 없게 한다.
+// 줄 맨 앞에서 한 글자만 이스케이프해야 하는 곳에 두는 임시 표지 (escapeProse 가 `\` 로 바꾼다).
+const ESC_MARK = '\uE002';
+const CONTAINER = /^(?:[ \t]*(?:>|(?:[-*+]|\d{1,9}[.)])(?=[ \t])))*/;
+const LIST_ITEM = /^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]/;
+
+const cap3 = (ws: string): string =>
+  ' '.repeat(Math.min(3, [...ws].reduce((n, c) => n + (c === '\t' ? 4 : 1), 0)));
+
+// D: 줄 단위로 울타리(~~~), 지시문(:::), setext 밑줄, 들여쓰기 코드를 무력화한다.
+// 백틱 울타리는 아래 조각 분해에서 짝 없는 백틱이 글자로 남으며 함께 막힌다.
+const neutralizeBlocks = (text: string): string => {
+  let inList = false;
+  return text
+    .split('\n')
+    .map((line) => {
+      if (line.trim() === '') return '';
+      const listLine = LIST_ITEM.test(line);
+      let prefix = CONTAINER.exec(line)?.[0] ?? '';
+      if (listLine && !inList) prefix = prefix.replace(/^[ \t]+/, (ws) => cap3(ws));
+      const after = line.slice(CONTAINER.exec(line)?.[0].length ?? 0);
+      const ws = /^[ \t]*/.exec(after)?.[0] ?? '';
+      let rest = after.slice(ws.length);
+      if (/^(?:~{3,}|:{3,})/.test(rest) || /^=+[ \t]*$/.test(rest)) rest = ESC_MARK + rest;
+      if (listLine) inList = true;
+      else if (cap3(ws).length < 2 && prefix === '') inList = false;
+      return prefix + cap3(ws) + rest;
+    })
+    .join('\n');
+};
+
+type Piece = { kind: 'prose' | 'code'; text: string };
+
+// A: 한 줄 안에서 CommonMark 방식으로 인라인 코드 조각을 나눈다.
+// 같은 길이의 백틱으로 닫힌 조각만 후보이고, 근거 있는 것만 그대로 두며 나머지는 글로 되돌린다.
+const splitLine = (line: string, corpus: string): Piece[] => {
+  const pieces: Piece[] = [];
+  const addProse = (text: string): void => {
+    const last = pieces[pieces.length - 1];
+    if (last?.kind === 'prose') last.text += text;
+    else pieces.push({ kind: 'prose', text });
+  };
+  let i = 0;
+  while (i < line.length) {
+    const char = line[i];
+    if (char === '\\') {
+      addProse(char);
+      i += 1;
+      // 백슬래시 바로 뒤의 백틱 묶음은 통째로 글자
+      const escaped = /^`+/.exec(line.slice(i))?.[0] ?? '';
+      addProse(escaped);
+      i += escaped.length;
+      continue;
+    }
+    if (char !== '`') {
+      addProse(char);
+      i += 1;
+      continue;
+    }
+    const open = /^`+/.exec(line.slice(i))?.[0] ?? '`';
+    let close = -1;
+    for (let j = i + open.length; j < line.length; ) {
+      if (line[j] !== '`') {
+        j += 1;
+        continue;
+      }
+      const run = /^`+/.exec(line.slice(j))?.[0] ?? '`';
+      if (run.length === open.length) {
+        close = j;
+        break;
+      }
+      j += run.length;
+    }
+    if (close < 0) {
+      addProse(open);
+      i += open.length;
+      continue;
+    }
+    const content = line.slice(i + open.length, close);
+    const trimmed = content.trim();
+    if (trimmed !== '' && corpus.includes(trimmed)) {
+      pieces.push({ kind: 'code', text: line.slice(i, close + open.length) });
+    } else {
+      addProse(content);
+    }
+    i = close + open.length;
+  }
+  return pieces;
+};
+
+// B: 링크·이미지·HTML·자동 링크를 만드는 문자를 이스케이프한다.
+const escapeProse = (text: string): string =>
+  text.replace(/[\\[\]<>`]/g, '\\$&').replace(new RegExp(ESC_MARK, 'g'), '\\');
+
+// C: 맨 URL 과 www 자동 링크를 지운다. 자리표시자, 백틱, 괄호 앞에서 멈춘다.
+const URL_BODY = String.raw`[^\s<>()\[\]{}\\`+'`'+String.raw`]*`;
+const BARE_URL = new RegExp(String.raw`(?:https?:\/\/|(?<![\w.])www\.)` + URL_BODY, 'gi');
+const stripUrls = (text: string): string => text.replace(BARE_URL, '');
+
+interface Substitution {
+  blocks: string[];
+  cited: Set<string>;
+}
+
+const placeholderText = (kind: string, id: string, input: AssembleInput, sub: Substitution): string => {
+  if (kind === 'commit') {
+    const commit = input.commits.find((c) => c.id === id);
+    return commit ? formatCommit(commit) : '';
+  }
+  if (kind === 'link') {
+    const link = input.links.find((l) => l.id === id);
+    if (!link) return '';
+    sub.cited.add(link.id);
+    return formatLink(link);
+  }
+  const block = kind === 'code' ? renderCode(id, input) : renderBlank(id, input);
+  if (block === null) return '';
+  sub.blocks.push(block);
+  return `\n\n${MARK_OPEN}${sub.blocks.length - 1}${MARK_CLOSE}\n\n`;
+};
+
+// 4~5단계: 글 조각에서 자리표시자는 치환하고(블록형은 표지로 독립 블록), 나머지 글자는 이스케이프한다.
+const renderProse = (prose: string, input: AssembleInput, sub: Substitution): string => {
+  const text = stripUrls(prose);
+  let out = '';
+  let last = 0;
+  for (const match of text.matchAll(PLACEHOLDER)) {
+    out += escapeProse(text.slice(last, match.index));
+    out += placeholderText(match[1], match[2], input, sub);
+    last = match.index + match[0].length;
+  }
+  return out + escapeProse(text.slice(last));
+};
+
+const renderModelText = (
+  raw: string,
   input: AssembleInput,
-): { text: string; blocks: string[]; cited: Set<string> } => {
-  const blocks: string[] = [];
-  const cited = new Set<string>();
-  const replaced = text.replace(PLACEHOLDER, (_whole, kind: string, id: string) => {
-    if (kind === 'commit') {
-      const commit = input.commits.find((c) => c.id === id);
-      return commit ? formatCommit(commit) : '';
-    }
-    if (kind === 'link') {
-      const link = input.links.find((l) => l.id === id);
-      if (!link) return '';
-      cited.add(link.id);
-      return formatLink(link);
-    }
-    const block = kind === 'code' ? renderCode(id, input) : renderBlank(id, input);
-    if (block === null) return '';
-    blocks.push(block);
-    return `\n\n${MARK_OPEN}${blocks.length - 1}${MARK_CLOSE}\n\n`;
-  });
-  return { text: replaced, blocks, cited };
+  sub: Substitution,
+): string => {
+  const corpus = evidenceCorpus(input);
+  return neutralizeBlocks(raw)
+    .split('\n')
+    .map((line) =>
+      splitLine(line, corpus)
+        .map((piece) => (piece.kind === 'code' ? piece.text : renderProse(piece.text, input, sub)))
+        .join(''),
+    )
+    .join('\n');
 };
 
 // 7단계: 첫 블록은 H1, 이후 H1 은 H2 로 낮춘다. 본문이 비면 실패한다.
@@ -192,15 +263,17 @@ const renderReferences = (links: PreparedLink[], cited: Set<string>, heading: st
   return `\n\n## ${heading}\n\n${used.map((link) => `- ${formatLink(link)}`).join('\n')}`;
 };
 
-// 작성 모델의 Markdown 을 최종 초안으로 만든다. 모델이 쓸 수 없는 것은 지우고, 코드·URL·빈칸은 우리가 넣는다.
+// 작성 모델의 Markdown 을 최종 초안으로 만든다. 모델이 쓴 글은 이스케이프로 무력화하고, 코드·URL·빈칸은 우리가 넣는다.
 export const assemble = (input: AssembleInput): string => {
-  const raw = input.markdown.replace(/\r\n?/g, '\n').replace(MARK_CHARS, '');
-  const prose = cleanProse(stripFencedBlocks(raw), evidenceCorpus(input));
-  const { text, blocks, cited } = substitute(prose, input);
+  const raw = input.markdown.replace(/\r\n?/g, '\n').replace(/[\uE000-\uE002]/g, '');
+  const sub: Substitution = { blocks: [], cited: new Set() };
+  const text = renderModelText(raw, input, sub);
   const tidy = text
     .replace(/[ \t]+$/gm, '')
-    .replace(/(\uE001\n\n)[ \t]+/g, '$1').replace(/\n{3,}/g, '\n\n').trim();
+    .replace(/(\uE001\n\n)[ \t]+/g, '$1')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
   const checked = normalizeHeadings(tidy);
-  const resolved = checked.replace(MARK_PATTERN, (_whole, index: string) => blocks[Number(index)]);
-  return resolved + renderReferences(input.links, cited, input.referencesHeading);
+  const resolved = checked.replace(MARK_PATTERN, (_whole, index: string) => sub.blocks[Number(index)]);
+  return resolved + renderReferences(input.links, sub.cited, input.referencesHeading);
 };
