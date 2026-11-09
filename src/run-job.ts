@@ -8,11 +8,11 @@ import type { Pipeline, PipelineInput } from './pipeline.ts';
 // 다음 단계를 시작하기 위해 남아 있어야 하는 실행 시간 (부족하면 스스로 실패 처리 후 종료)
 export const MIN_REMAINING_MS = 30_000;
 
-export interface RunJobDependencies {
+export interface RunJobDependencies<C = unknown, A = unknown> {
   jobs: JobStore;
   signal: SendSignal;
   fetchCommit: FetchCommit;
-  pipeline: Pipeline;
+  pipeline: Pipeline<C, A>;
   // Lambda 남은 실행 시간 (context.getRemainingTimeInMillis)
   remainingTimeMs: () => number;
   // 실패 원인 보고 (Sentry 연동 전까지는 아무것도 하지 않음)
@@ -27,7 +27,7 @@ export type RunJobOutcome = 'completed' | 'failed' | 'skipped' | 'cancelled';
  * - 단계를 마칠 때마다 DB 단계를 갱신하고 Realtime 신호 전송
  * - 어떤 오류든 사유 코드로 실패 기록 (Lambda 가 비정상 종료되면 Next.js 가 시간 초과로 처리)
  */
-export const runJob = async (
+export const runJob = async <C = unknown, A = unknown>(
   jobId: string,
   {
     jobs,
@@ -36,7 +36,7 @@ export const runJob = async (
     pipeline,
     remainingTimeMs,
     reportError = () => {},
-  }: RunJobDependencies,
+  }: RunJobDependencies<C, A>,
 ): Promise<RunJobOutcome> => {
   const started = await jobs.markRunning(jobId);
 

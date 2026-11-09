@@ -4,7 +4,7 @@ import type { GenerationBroadcastPayload } from './contract.ts';
 import { GithubApiError } from './errors.ts';
 import type { CommitDetail } from './github.ts';
 import type { JobContext, JobStore } from './jobs.ts';
-import { createPlaceholderPipeline } from './pipeline.ts';
+import { createPlaceholderPipeline } from './placeholder-pipeline.ts';
 import { MIN_REMAINING_MS, runJob, type RunJobDependencies } from './run-job.ts';
 
 const CONTEXT: JobContext = {

@@ -1,3 +1,4 @@
+import Anthropic from '@anthropic-ai/sdk';
 import type { Context } from 'aws-lambda';
 import { createBroadcaster } from './broadcast.ts';
 import { loadConfig } from './config.ts';
@@ -5,7 +6,9 @@ import { parseGenerationRequest } from './contract.ts';
 import { getDatabase } from './db.ts';
 import { createCommitFetcher } from './github.ts';
 import { createJobStore } from './jobs.ts';
-import { createPlaceholderPipeline } from './pipeline.ts';
+import { createLinkFetch, fetchReferenceLinks } from './generation/links.ts';
+import { createAnthropicLlm, LLM_TIMEOUT_MS } from './generation/llm.ts';
+import { createClaudePipeline } from './pipeline.ts';
 import { runJob, type RunJobOutcome } from './run-job.ts';
 
 /**
@@ -27,6 +30,14 @@ export const handler = async (
   const config = loadConfig();
   const sql = getDatabase(config.databaseUrl);
 
+  // 클라이언트와 링크 요청 함수는 호출마다 한 번만 만든다
+  const client = new Anthropic({
+    apiKey: config.anthropicApiKey,
+    timeout: LLM_TIMEOUT_MS,
+    maxRetries: 2,
+  });
+  const linkFetch = createLinkFetch();
+
   const outcome = await runJob(request.jobId, {
     jobs: createJobStore(sql),
     signal: createBroadcaster({
@@ -34,7 +45,10 @@ export const handler = async (
       publishableKey: config.supabasePublishableKey,
     }),
     fetchCommit: createCommitFetcher(request.githubToken),
-    pipeline: createPlaceholderPipeline(),
+    pipeline: createClaudePipeline({
+      llm: createAnthropicLlm(client),
+      fetchLinks: (urls) => fetchReferenceLinks(urls, linkFetch),
+    }),
     remainingTimeMs: () => context.getRemainingTimeInMillis(),
   });
 
