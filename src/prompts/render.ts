@@ -17,10 +17,22 @@ import {
 /**
  * 프롬프트에 넣는 데이터를 태그로 감싸는 함수 (언어와 무관)
  * - 모델은 태그 안을 데이터로만 다루도록 지시받는다
- * - 태그 안 원문의 `</` 는 `<\/` 로 바꿔, 원문이 닫는 태그를 흉내 내 데이터 밖으로 나가지 못하게 한다
+ * - 원문(요청, 커밋, 코드, 링크, 앞 단계 모델 출력)이 이 파이프라인의 태그를 열거나 닫는 척하지 못하게,
+ *   태그 이름으로 시작하는 `<` 만 `&lt;` 로 바꾼다. `<div>`, `a < b` 같은 보통 코드는 그대로 둔다.
  */
 
-export const escapeTagText = (text: string): string => text.replaceAll('</', '<\\/');
+// 렌더러가 내보내는 태그 이름. element/inline 은 이 이름만 받으므로 목록이 실제 출력과 어긋나지 않는다.
+const TAGS = [
+  'request', 'commit', 'message', 'files', 'hunk', 'link', 'links', 'title', 'text', 'plan',
+  'section', 'heading', 'purpose', 'hunks', 'takeaway', 'outline', 'fact', 'code', 'point',
+  'source', 'blank',
+] as const;
+type Tag = (typeof TAGS)[number];
+
+// `<`, 선택적 `/`, 태그 이름(대소문자 무시), 그 뒤가 이름 글자가 아닌 경우
+const TAG_OPEN = new RegExp(`<(?=/?(?:${TAGS.join('|')})(?![\\w.:-]))`, 'gi');
+
+export const escapeTagText = (text: string): string => text.replace(TAG_OPEN, '&lt;');
 
 const escapeAttr = (value: string): string =>
   value.replace(/[&"<>]/g, (ch) => ({ '&': '&amp;', '"': '&quot;', '<': '&lt;', '>': '&gt;' })[ch] ?? ch);
@@ -32,11 +44,11 @@ const attrs = (values: Record<string, string | undefined>): string =>
     .join('');
 
 // body 는 이미 탈출시킨 텍스트나 다른 태그여야 한다
-const element = (tag: string, values: Record<string, string | undefined>, body: string): string =>
+const element = (tag: Tag, values: Record<string, string | undefined>, body: string): string =>
   `<${tag}${attrs(values)}>\n${body}\n</${tag}>`;
 
 // 한 줄짜리 원문을 태그로 감싼다
-const inline = (tag: string, values: Record<string, string | undefined>, text: string): string =>
+const inline = (tag: Tag, values: Record<string, string | undefined>, text: string): string =>
   `<${tag}${attrs(values)}>${escapeTagText(text)}</${tag}>`;
 
 const pick = <T extends string>(values: readonly T[], value: string, fallback: T): T =>
@@ -99,7 +111,8 @@ export const renderCatalog = (commits: PreparedCommit[]): string => {
 
 // ---- 분석 단계: 기획, 커밋 메시지, hunk 원문 ----
 
-export const renderPlan = (plan: Plan): string =>
+// available 을 주면 각 절의 hunk 번호를 실제로 넘긴 hunk 로 걸러, 읽지 않은 hunk 를 근거로 쓰지 못하게 한다
+export const renderPlan = (plan: Plan, available?: Set<string>): string =>
   element(
     'plan',
     {},
@@ -113,7 +126,11 @@ export const renderPlan = (plan: Plan): string =>
           [
             inline('heading', {}, section.heading),
             inline('purpose', {}, section.purpose),
-            inline('hunks', {}, section.hunks.join(', ')),
+            inline(
+              'hunks',
+              {},
+              section.hunks.filter((id) => !available || available.has(id)).join(', '),
+            ),
             inline('links', {}, section.links.join(', ')),
           ].join('\n'),
         ),
@@ -173,10 +190,16 @@ export const renderLinks = (links: PreparedLink[], options: { preview: boolean }
 export const renderLinkTitles = (links: PreparedLink[]): string =>
   element('links', {}, links.map((link) => inline('link', { id: link.id }, link.title)).join('\n'));
 
-// 조립 때 들어갈 모습대로 보여 준다: after 는 삭제 줄을 빼고 접두사를 뗀다
-const codeLines = (pick: Analysis['code'][number], hunk: PreparedHunk): string[] => {
-  const lines = hunk.lines.slice(pick.startLine - 1, pick.endLine);
-  return pick.mode === 'diff'
+// 코드 조각의 실제 줄 (작성 프롬프트와 조립이 함께 쓴다)
+// after 는 삭제 줄을 빼고 접두사를 떼고, diff 는 접두사를 그대로 둔다. 줄 번호는 hunk 안에서 1부터, 양끝 포함.
+export const buildCodeLines = (
+  hunk: PreparedHunk,
+  startLine: number,
+  endLine: number,
+  mode: Analysis['code'][number]['mode'],
+): string[] => {
+  const lines = hunk.lines.slice(startLine - 1, endLine);
+  return mode === 'diff'
     ? lines
     : lines.filter((line) => !line.startsWith('-')).map((line) => line.slice(1));
 };
@@ -208,7 +231,7 @@ const renderSection = (
         { id: pick.id, lang: pick.mode === 'diff' ? 'diff' : hunk.language, mode: pick.mode },
         [
           inline('point', {}, pick.point),
-          element('source', {}, escapeTagText(codeLines(pick, hunk).join('\n'))),
+          element('source', {}, escapeTagText(buildCodeLines(hunk, pick.startLine, pick.endLine, pick.mode).join('\n'))),
         ].join('\n'),
       );
     });
