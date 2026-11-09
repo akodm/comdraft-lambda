@@ -21,3 +21,18 @@ export const estimateTokens = (text: string): number => {
   }
   return Math.ceil(ascii / 3) + other;
 };
+
+// 근거로 쓰는 참고 링크 최대 개수 (L1~L10)
+export const MAX_REFERENCE_LINKS = 10;
+// 링크 하나를 가져오는 제한 시간
+export const LINK_TIMEOUT_MS = 5_000;
+// 링크 응답에서 읽는 최대 바이트
+export const LINK_MAX_BYTES = 1_048_576;
+// 따라가는 리다이렉트 최대 횟수
+export const LINK_MAX_REDIRECTS = 3;
+// 링크 하나의 본문 토큰 상한
+export const LINK_TOKEN_BUDGET = 3_000;
+// 링크 제목 최대 글자 수
+export const LINK_TITLE_MAX = 80;
+// 링크 본문 미리보기 글자 수
+export const LINK_PREVIEW_CHARS = 300;
