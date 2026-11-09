@@ -7,7 +7,7 @@ import {
   MAX_MESSAGE_CHARS,
   MAX_SELECTED_HUNKS,
 } from './limits.ts';
-import { containsSecret, isSecretFile } from './secrets.ts';
+import { containsSecret, isSecretFile, redactSecrets } from './secrets.ts';
 
 export interface PreparedHunk {
   id: string;
@@ -149,7 +149,7 @@ export const prepareCommits = (commits: CommitDetail[]): PreparedCommit[] =>
       id,
       sha: commit.sha,
       htmlUrl: commit.htmlUrl,
-      message: commit.message.slice(0, MAX_MESSAGE_CHARS),
+      message: redactSecrets(commit.message.slice(0, MAX_MESSAGE_CHARS)),
       files: commit.files
         .slice(0, MAX_CATALOG_FILES_PER_COMMIT)
         .map((file, fileIndex) => prepareFile(id, fileIndex, file)),

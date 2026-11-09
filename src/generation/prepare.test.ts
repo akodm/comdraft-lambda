@@ -81,6 +81,11 @@ describe('prepareCommits', () => {
     assert.equal(c.files[0].hunks[0].lines[0], '+l0');
   });
 
+  it('커밋 메시지의 비밀값은 가린다', () => {
+    const [c] = prepareCommits([commit('a', [], 'fix: ghp_' + 'a'.repeat(36) + ' 제거')]);
+    assert.equal(c.message, 'fix: [가림] 제거');
+  });
+
   it('메시지는 1000자, 파일은 50개까지', () => {
     const files = Array.from({ length: 60 }, (_, i) => file(`f${i}.ts`, PATCH));
     const [c] = prepareCommits([commit('a', files, 'm'.repeat(1500))]);
