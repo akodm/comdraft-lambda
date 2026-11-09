@@ -30,7 +30,9 @@ const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const ACCEPTED_TYPES = new Set(['text/html', 'text/plain', 'text/markdown']);
 
 // 연결을 막을 주소 범위 (스펙 5절)
-const blocked = new BlockList();
+// IPv4 주소가 ::ffff:0:0/96 에 걸리지 않도록 버전별로 분리한다
+const blocked4 = new BlockList();
+const blocked6 = new BlockList();
 for (const [net, prefix] of [
   ['0.0.0.0', 8],
   ['10.0.0.0', 8],
@@ -47,19 +49,22 @@ for (const [net, prefix] of [
   ['224.0.0.0', 4],
   ['240.0.0.0', 4],
 ] as const) {
-  blocked.addSubnet(net, prefix, 'ipv4');
+  blocked4.addSubnet(net, prefix, 'ipv4');
 }
 for (const [net, prefix] of [
-  ['::', 128],
-  ['::1', 128],
+  ['::', 96], // 미지정·루프백·IPv4 호환 주소
+  ['::ffff:0:0:0', 96], // IPv4 변환 주소
   ['64:ff9b::', 96],
+  ['64:ff9b:1::', 48], // 로컬용 NAT64
+  ['2001::', 32], // Teredo
+  ['2002::', 16], // 6to4
   ['100::', 64],
   ['2001:db8::', 32],
   ['fc00::', 7],
   ['fe80::', 10],
   ['ff00::', 8],
 ] as const) {
-  blocked.addSubnet(net, prefix, 'ipv6');
+  blocked6.addSubnet(net, prefix, 'ipv6');
 }
 
 // IPv4-mapped IPv6(::ffff:a.b.c.d) 를 IPv4 문자열로 바꾼다. 아니면 null
@@ -82,10 +87,10 @@ export const isPublicAddress = (address: string): boolean => {
   if (family === 0) return false;
   if (family === 6) {
     const mapped = unmapIPv4(address);
-    if (mapped) return !blocked.check(mapped, 'ipv4');
-    return !blocked.check(address, 'ipv6');
+    if (mapped) return !blocked4.check(mapped, 'ipv4');
+    return !blocked6.check(address, 'ipv6');
   }
-  return !blocked.check(address, 'ipv4');
+  return !blocked4.check(address, 'ipv4');
 };
 
 // http/https, 기본 포트, 자격 증명 없음, IP 리터럴이면 공인 주소만
@@ -147,6 +152,13 @@ export const extractReadableText = (html: string, url: string): { title: string;
   return { title: (title || docTitle).replace(/\s+/g, ' ').trim(), text: collapse(text) };
 };
 
+// 문자 수로 자를 때 서로게이트 쌍이 잘리지 않게 한다
+const sliceSafe = (text: string, length: number): string => {
+  const cut = text.slice(0, length);
+  const last = cut.charCodeAt(cut.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
+};
+
 // 토큰 상한을 넘으면 글자 수를 이분 탐색으로 줄인다
 const truncateToBudget = (text: string, budget: number): string => {
   if (estimateTokens(text) <= budget) return text;
@@ -157,10 +169,7 @@ const truncateToBudget = (text: string, budget: number): string => {
     if (estimateTokens(text.slice(0, mid)) <= budget) lo = mid;
     else hi = mid - 1;
   }
-  let cut = text.slice(0, lo);
-  const last = cut.charCodeAt(cut.length - 1);
-  if (last >= 0xd800 && last <= 0xdbff) cut = cut.slice(0, -1);
-  return cut.trimEnd();
+  return sliceSafe(text, lo).trimEnd();
 };
 
 // 본문을 LINK_MAX_BYTES 까지만 읽고 나머지는 취소한다
@@ -223,7 +232,7 @@ const fetchOne = async (rawUrl: string, fetchImpl: LinkFetch): Promise<Omit<Prep
     type === 'text/html' ? extractReadableText(body, url.href) : { title: '', text: collapse(body) };
   const text = truncateToBudget(extracted.text, LINK_TOKEN_BUDGET);
   if (!text) return null;
-  const title = extracted.title.slice(0, LINK_TITLE_MAX).trim() || url.hostname;
+  const title = sliceSafe(extracted.title, LINK_TITLE_MAX).trim() || url.hostname;
   return { url: rawUrl, title, text };
 };
 

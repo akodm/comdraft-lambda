@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import type dns from 'node:dns';
+import { createServer } from 'node:http';
 import { describe, it } from 'node:test';
 
 import {
@@ -12,6 +13,7 @@ import {
 } from './limits.ts';
 import {
   type LinkFetch,
+  createLinkFetch,
   createSafeLookup,
   extractReadableText,
   fetchReferenceLinks,
@@ -45,6 +47,7 @@ describe('isPublicAddress', () => {
       '127.0.0.1', '10.0.0.1', '172.16.0.1', '192.168.1.1', '169.254.169.254', '100.64.0.1', '0.0.0.0',
       '::1', '::', 'fc00::1', 'fe80::1', '::ffff:127.0.0.1', '::ffff:7f00:1', '224.0.0.1', '255.255.255.255',
       'ff02::1', 'not-an-ip',
+      '::7f00:1', '::127.0.0.1', '::ffff:0:7f00:1', '64:ff9b:1::a00:1', '2002:7f00:1::', '2002:a00:1::1', '2001::1',
     ]) {
       assert.equal(isPublicAddress(a), false, a);
     }
@@ -75,6 +78,7 @@ describe('isAllowedUrl', () => {
     assert.equal(isAllowedUrl(new URL('http://2130706433/')), false);
     assert.equal(isAllowedUrl(new URL('http://[::1]/')), false);
     assert.equal(isAllowedUrl(new URL('http://[::ffff:10.0.0.1]/')), false);
+    assert.equal(isAllowedUrl(new URL('http://[::7f00:1]/')), false);
     assert.equal(isAllowedUrl(new URL('http://93.184.216.34/')), true);
   });
 });
@@ -126,6 +130,22 @@ describe('createSafeLookup', () => {
   it('해석 오류와 빈 결과는 오류로 전달한다', async () => {
     assert.ok((await run(fakeResolve([], new Error('ENOTFOUND')), { all: true })).err);
     assert.ok((await run(fakeResolve([]), { all: true })).err);
+  });
+});
+
+describe('createLinkFetch', () => {
+  it('localhost 로 가는 요청은 안전한 lookup 이 막는다', async () => {
+    const server = createServer((_req, res) => res.end('secret'));
+    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+    try {
+      const { port } = server.address() as { port: number };
+      await assert.rejects(
+        createLinkFetch()(`http://localhost:${port}/`, { redirect: 'manual', signal: AbortSignal.timeout(3000) }),
+      );
+    } finally {
+      server.closeAllConnections();
+      await new Promise((done) => server.close(done));
+    }
   });
 });
 
@@ -240,6 +260,13 @@ describe('fetchReferenceLinks', () => {
     assert.equal(LINK_TITLE_MAX, 80);
     assert.ok(a.title.length <= 80 && a.title.startsWith('TTTT'));
     assert.equal(b.title, 'a.test');
+  });
+
+  it('제목을 자를 때 이모지 쌍을 쪼개지 않는다', async () => {
+    const title = `${'T'.repeat(79)}😀 tail`;
+    const fetchImpl = fetchFrom({ 'https://a.test/e': () => htmlResponse(html('<p>본문</p>', title)) });
+    const [link] = await fetchReferenceLinks(['https://a.test/e'], fetchImpl);
+    assert.equal(link.title, 'T'.repeat(79));
   });
 
   it('본문은 링크당 토큰 상한까지만 남긴다', async () => {
