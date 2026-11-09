@@ -1,5 +1,7 @@
 // 커밋 메시지 한 개에서 넣는 최대 글자 수
 export const MAX_MESSAGE_CHARS = 1_000;
+// 기획 단계에 보내는 커밋 카탈로그 토큰 상한 (넘으면 최근 커밋부터 hunk 줄을 줄인다)
+export const PLAN_CATALOG_TOKENS = 20_000;
 // 커밋 하나의 카탈로그에 올리는 최대 파일 수
 export const MAX_CATALOG_FILES_PER_COMMIT = 50;
 // 분석 단계에 보내는 hunk 개수 상한
