@@ -10,13 +10,19 @@ import type { Database } from './db.ts';
  * - 비동기 호출이 중복돼도 queued → running 은 한 번만 성공하므로 두 번째 실행은 바로 끝남
  */
 
-// 작업에 필요한 값 (요청 문구, 기본 옵션, 커밋 SHA, 저장소)
+// 작성 프롬프트와 결과 글의 언어 (draft_prompt.locale, DB 제약으로 두 값만 저장됨)
+export type JobLocale = 'ko' | 'en';
+
+// 작업에 필요한 값 (요청 문구, 기본 옵션, 언어, 커밋 SHA, 저장소)
 export interface JobContext {
   prompt: string;
   tone: string;
   postType: string;
   length: string;
   requiredBlocks: string[];
+  locale: JobLocale;
+  // 사용자가 붙인 참고 링크 (등록 순서)
+  referenceUrls: string[];
   commitShas: string[];
   owner: string;
   repo: string;
@@ -49,7 +55,8 @@ export const createJobStore = (sql: Database): JobStore => ({
   loadContext: async (jobId) => {
     const [row] = await sql<JobContext[]>`
       select p.prompt, p.tone, p.post_type as "postType", p.length,
-        p.required_blocks as "requiredBlocks", p.commit_shas as "commitShas",
+        p.required_blocks as "requiredBlocks", p.locale, p.commit_shas as "commitShas",
+        coalesce((select array_agg(l.url order by l.created_at) from comdraft.draft_reference_link l where l.draft_id = p.draft_id), '{}') as "referenceUrls",
         r.owner_login as owner, r.name as repo
       from comdraft.draft_prompt p
       join comdraft.draft d on d.id = p.draft_id

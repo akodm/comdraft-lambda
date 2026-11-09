@@ -31,6 +31,12 @@ variable "supabase_publishable_key" {
   type        = string
 }
 
+variable "anthropic_api_key" {
+  description = "Anthropic API 키 (초안 생성 모델 호출용)"
+  type        = string
+  sensitive   = true
+}
+
 variable "lambda_timeout_seconds" {
   description = "Lambda 실행 시간 제한 (Next.js lib/generation/contract.ts 의 GENERATION_LAMBDA_TIMEOUT_MS 와 맞출 것)"
   type        = number

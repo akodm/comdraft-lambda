@@ -6,3 +6,6 @@ database_url = "postgresql://comdraft.<project-ref>:<password>@aws-0-ap-northeas
 
 supabase_url             = "https://<project-ref>.supabase.co"
 supabase_publishable_key = "sb_publishable_..."
+
+# Anthropic API 키 (초안 생성용)
+anthropic_api_key = ""

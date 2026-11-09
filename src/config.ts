@@ -8,6 +8,8 @@ export interface LambdaConfig {
   supabaseUrl: string;
   // Realtime Broadcast 전송용 공개 키 (신호만 보내므로 공개 키로 충분)
   supabasePublishableKey: string;
+  // Anthropic API 키 (초안 생성 모델 호출용, 로그/오류에 남기지 않음)
+  anthropicApiKey: string;
 }
 
 const requireEnv = (env: NodeJS.ProcessEnv, key: string) => {
@@ -24,4 +26,5 @@ export const loadConfig = (env: NodeJS.ProcessEnv = process.env): LambdaConfig =
   databaseUrl: requireEnv(env, 'DATABASE_URL'),
   supabaseUrl: requireEnv(env, 'SUPABASE_URL'),
   supabasePublishableKey: requireEnv(env, 'SUPABASE_PUBLISHABLE_KEY'),
+  anthropicApiKey: requireEnv(env, 'ANTHROPIC_API_KEY'),
 });

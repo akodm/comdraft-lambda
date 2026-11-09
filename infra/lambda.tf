@@ -45,6 +45,7 @@ resource "aws_lambda_function" "generation" {
       DATABASE_URL             = var.database_url
       SUPABASE_URL             = var.supabase_url
       SUPABASE_PUBLISHABLE_KEY = var.supabase_publishable_key
+      ANTHROPIC_API_KEY        = var.anthropic_api_key
     }
   }
 }

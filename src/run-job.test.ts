@@ -13,6 +13,8 @@ const CONTEXT: JobContext = {
   postType: 'tutorial',
   length: 'medium',
   requiredBlocks: [],
+  locale: 'ko',
+  referenceUrls: [],
   commitShas: ['b74e3d0aaaa', 'a8f2c91bbbb'],
   owner: 'akodm',
   repo: 'comdraft',

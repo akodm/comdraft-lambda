@@ -18,7 +18,12 @@
     "test": "node --experimental-strip-types --test \"src/**/*.test.ts\""
   },
   "dependencies": {
-    "postgres": "3.4.9"
+    "@anthropic-ai/sdk": "^1.6.0",
+    "@mozilla/readability": "^0.6.0",
+    "linkedom": "^0.18.15",
+    "postgres": "3.4.9",
+    "undici": "^8.12.4",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.152",
