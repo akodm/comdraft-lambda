@@ -15,8 +15,9 @@ const MAX_LEVEL = 6;
 // 사용자에게 보여 줄 질문에서 템플릿·따옴표를 깨는 문자를 정리한다.
 export const sanitizeHint = (text: string): string => {
   const cleaned = text
-    .replaceAll(':::', '')
     .replace(/["{}]/g, '')
+    // 따옴표 등을 먼저 지운 뒤 콜론 3개 이상 묶음을 통째로 지워 ::: 가 다시 생기지 않게 한다.
+    .replace(/:{3,}/g, '')
     .replace(/[\r\n]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -62,7 +63,10 @@ const isKnownEvidence = (
   if (!EVIDENCE_PATTERN.test(id)) return false;
   if (id === 'R') return true;
   if (id.startsWith('L')) return linkIds.has(id);
-  return id.includes('.') ? hunks.has(id) : commitIds.has(id);
+  if (!id.includes('.')) return commitIds.has(id);
+  // 가린 hunk 는 코드 선택과 같이 근거로도 쓰지 않는다.
+  const hunk = hunks.get(id);
+  return hunk !== undefined && !hunk.redacted;
 };
 
 const isValidCodePick = (

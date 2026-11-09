@@ -162,4 +162,23 @@ describe('validateAnalysis', () => {
     );
     assert.equal(input.unknowns.length, 1);
   });
+
+  it('sanitizeHint: 따옴표·중괄호를 지운 뒤 ::: 가 다시 생기지 않는다', () => {
+    for (const input of ['"::{:"', '":\":"', ':::::', '::"":']) {
+      assert.equal(sanitizeHint(input).includes(':::'), false, input);
+    }
+  });
+
+  it('가린 hunk 만 근거인 사실은 버리고 빈 절에 detail unknown 을 만든다', () => {
+    const out = validateAnalysis(
+      {
+        ...empty,
+        facts: [{ id: 'K1', section: 0, text: 'a', evidence: ['C1.F1.H2'] }],
+        unknowns: [{ id: 'U1', section: 1, kind: 'result', ask: '?' }],
+      },
+      ctxFor(p, [hunk('C1.F1.H2', 5, true)]),
+    );
+    assert.deepEqual(out.facts, []);
+    assert.deepEqual(out.unknowns.map((u) => [u.id, u.section]), [['U1', 1], ['U2', 0]]);
+  });
 });
