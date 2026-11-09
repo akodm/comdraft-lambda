@@ -21,6 +21,7 @@
     "@anthropic-ai/sdk": "^1.6.0",
     "@mozilla/readability": "^0.6.0",
     "linkedom": "^0.18.15",
+    "marked": "17.0.6",
     "postgres": "3.4.9",
     "undici": "^8.12.4",
     "zod": "^4.6.7"
@@ -29,7 +30,6 @@
     "@types/aws-lambda": "^8.10.152",
     "@types/node": "^22.15.0",
     "esbuild": "^0.25.0",
-    "marked": "17.0.6",
     "typescript": "^5.8.0"
   }
 }

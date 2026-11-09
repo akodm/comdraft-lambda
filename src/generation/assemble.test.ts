@@ -80,19 +80,33 @@ const collectTokens = (tokens: Token[] | undefined, found: Token[]): void => {
     any.rows?.forEach((row) => row.forEach((cell) => collectTokens(cell.tokens, found)));
   }
 };
-const assertNoInjectedMarkup = (markdown: string, allowedCodeBlocks = 0): Token[] => {
+const CONTAINER_START = /^(?:[ \t]*(?:>|(?:[-*+]|\d{1,9}[.)])(?=[ \t])))*[ \t]*/;
+const BLANK_BLOCK = /^:::blank \{kind="[a-z]+" hint="[^"\n]*"\}\n:::$/gm;
+const assertNoInjectedMarkup = (markdown: string, allowedCodeBlocks = 0, allowedBlanks = 0): Token[] => {
   const found: Token[] = [];
   collectTokens(new Lexer({ gfm: true }).lex(markdown), found);
   let codeBlocks = 0;
+  let rest = markdown;
   for (const token of found) {
-    if (token.type === 'code') codeBlocks += 1;
-    else if (token.type === 'link') {
+    if (token.type === 'code') {
+      codeBlocks += 1;
+      rest = rest.replace(token.raw, '');
+    } else if (token.type === 'link') {
       assert.ok(ALLOWED_HREFS.has((token as unknown as { href: string }).href), `link ${token.raw} in ${markdown}`);
     } else {
       assert.ok(!['html', 'image', 'def'].includes(token.type), `${token.type} ${token.raw} in ${markdown}`);
     }
   }
   assert.equal(codeBlocks, allowedCodeBlocks, `code blocks in ${markdown}`);
+  assert.equal(rest.match(BLANK_BLOCK)?.length ?? 0, allowedBlanks, `blank blocks in ${markdown}`);
+  rest = rest.replace(BLANK_BLOCK, '');
+  for (const line of rest.split('\n')) {
+    const start = line.replace(CONTAINER_START, '');
+    // 한 줄 안에서 닫힌 ```x``` 는 울타리가 아니라 인라인 코드다.
+    if (/^(```|~~~|:::)/.test(start) && !/^(`{3,})[^`]*\1(?!`)/.test(start)) {
+      assert.fail(`block opener ${JSON.stringify(line)} in ${markdown}`);
+    }
+  }
   return found;
 };
 
@@ -133,7 +147,7 @@ describe('assemble', () => {
 
   it('모르는 자리표시자는 지우지만 {{ value }} 같은 다른 글자는 그대로 둔다', () => {
     const out = run('# 제목\n\n앞 {{code:S9}} {{link:L9}} {{commit:C9}} {{ask:U9}} 뒤 {{ value }} {{code}}');
-    assert.equal(out, '# 제목\n\n앞     뒤 {{ value }} {{code}}');
+    assert.equal(out, '# 제목\n\n앞         뒤 {{ value }} {{code}}');
   });
 
   it('인라인 코드 안의 URL 은 건드리지 않는다', () => {
@@ -300,7 +314,7 @@ describe('assemble', () => {
 
     it('bare URL 과 www 는 지운다', () => {
       const out = probe('see https://bare.com/p and www.evil.com/x end');
-      assert.equal(out, 'see  and  end');
+      assert.equal(out, 'see   and   end');
     });
 
     it('모델이 쓴 링크는 글자가 그대로 보이게 이스케이프된다', () => {
@@ -346,6 +360,98 @@ describe('assemble', () => {
       assert.equal(probe('a > b'), 'a \\> b');
     });
 
+    it('검사 도구가 나쁜 Markdown 에서는 실제로 실패한다', () => {
+      for (const bad of [
+        '# T\n\n```js\nx\n```',
+        '# T\n\n    indented',
+        '# T\n\n- a\n\n      deep',
+        '# T\n\n<b>x</b>',
+        '# T\n\n[a](http://evil.com)',
+        '# T\n\n![a](http://x.com/i.png)',
+        '# T\n\nwww.evil.com',
+        '# T\n\n:::callout\nx\n:::',
+        '# T\n\n> ~~~\n> x',
+        '# T\n\n[r]: /x\n\n[r]',
+      ]) {
+        assert.throws(() => assertNoInjectedMarkup(bad), bad);
+      }
+      assert.throws(() => assertNoInjectedMarkup('# T\n\n:::blank {kind="lesson" hint="x"}\n:::'));
+      assert.doesNotThrow(() => assertNoInjectedMarkup('# T\n\n:::blank {kind="lesson" hint="x"}\n:::', 0, 1));
+    });
+
+    // 검토에서 나온 우회 사례: [본문, 넣은 코드 블록 수, 넣은 빈칸 수]
+    const reviewed: Record<string, [string, number, number]> = {
+      f1_xwww: ['xwww.evil.com and a.www.evil.com and _www.evil.com_', 0, 0],
+      f2_email: ['mail evil@phish.com now', 0, 0],
+      f2_mailto: ['\\<mailto:a@b.c\\>', 0, 0],
+      f2_span: ['x `evil@phish.com` y', 0, 0],
+      f3_a: ['- a\n\n          - evil()', 0, 0],
+      f3_b: ['- a\n\n        > evil()', 0, 0],
+      f3_c: ['para\n\n      > evil()', 0, 0],
+      f3_d: ['para\n\n\t> evil()', 0, 0],
+      f3_e: ['> para\n>\n>       - evil()', 0, 0],
+      f3_f: ['-     - evil()', 0, 0],
+      f4_bang: ['!{{link:L1}} and !{{commit:C1}} and !!{{link:L1}}', 0, 0],
+      legit_lists: ['- a\n- b\n  - b1\n    - b2\n- c\n\n1. one\n2. two\n   1. two-a\n3. three', 0, 0],
+      legit_quoteInList: ['- a\n  > q', 0, 0],
+      legit_listInQuote: ['> - a\n>   - b', 0, 0],
+      emptyItem: ['-\n\n      evil()', 0, 0],
+      emptyOrdered: ['1.\n\n       evil()', 0, 0],
+      orderedNoInterrupt: ['para\n2. x\n\n      evil()', 0, 0],
+      hrStars: ['* * *\n\n      evil()', 0, 0],
+      hrDashes: ['- - -\n\n      evil()', 0, 0],
+      setextDash: ['para\n-\n\n      evil()', 0, 0],
+      lazyList: ['- a\nlazy\n\n      evil()', 0, 0],
+      deepNest: ['- a\n  - b\n    - c\n      - d\n        - e\n\n            evil()', 0, 0],
+      mixedTabs: ['- a\n\n \t\tevil()', 0, 0],
+      quoteTabs: ['>\t\tevil()', 0, 0],
+      listTabMarker: ['-\tx\n\n\t\tevil()', 0, 0],
+      unkJoinWww: ['ww{{link:L9}}w.evil.com', 0, 0],
+      unkJoinHttps: ['htt{{commit:C9}}ps://evil.com', 0, 0],
+      unkJoinCodeFail: ['ww{{code:S9}}w.evil.com', 0, 0],
+      unkJoinDirective: [':{{link:L9}}::blank {kind="lesson"}\n:{{link:L9}}::', 0, 0],
+      unkJoinFence: ['~{{link:L9}}~~\nevil()\n~{{link:L9}}~~', 0, 0],
+      unkJoinIndent: ['para\n\n   {{link:L9}} evil()', 0, 0],
+      afterBlockFence: ['para {{code:S1}}~~~\nevil()\n~~~', 1, 0],
+      afterBlockDirective: ['x {{ask:U1}}:::blank {kind="lesson"}\n:::', 0, 1],
+      blockInList: ['- {{code:S1}}\n\n      evil()', 1, 0],
+      blockMidList: ['- a {{code:S1}} b\n\n      evil()', 1, 0],
+      blockMidOrdered: ['1. a {{ask:U1}} b\n\n       evil()', 0, 1],
+      urlLeadFence: ['https://x ~~~\nevil()\nhttps://x ~~~', 0, 0],
+      urlLeadDirective: ['www.x :::blank {kind="lesson"}\nwww.x :::', 0, 0],
+      urlLeadTab: ['para\n\nwww.x\tevil()', 0, 0],
+      urlLeadSpaces: ['para\n\nwww.x    evil()', 0, 0],
+      spanFence: ['`~~~`\nevil()\n`~~~`', 0, 0],
+      spanDirective: ['`:::blank {kind="lesson"}`\n`:::`', 0, 0],
+      spanIndent: ['para\n\n`    evil()`', 0, 0],
+      spanSetext: ['para\n`===`', 0, 0],
+      thematicStars: ['* * *', 0, 0],
+      thematicDashes: ['- - -', 0, 0],
+      setextDashOnly: ['para\n-', 0, 0],
+      dashOnly: ['-', 0, 0],
+      orderedOnly: ['1.', 0, 0],
+      emptyItemBetween: ['- a\n-\n- b', 0, 0],
+    };
+    for (const [name, [value, code, blank]] of Object.entries(reviewed)) {
+      it(`검토 사례 ${name}`, () => {
+        const out = run(`# T\n\nbody\n\n${value}`, {
+          hunks: new Map([[probeHunk.id, probeHunk]]),
+          links: probeLinks,
+        });
+        assertNoInjectedMarkup(out, code, blank);
+      });
+    }
+
+    it('어떤 입력에서도 invalid_result 외의 오류는 나오지 않는다', () => {
+      for (const value of ['* * *', '- - -', 'para\n-', '-', '1.', '- a\n-\n- b', ' ', '`']) {
+        try {
+          run(`# T\n\nbody\n\n${value}`);
+        } catch (e) {
+          assert.ok(e instanceof GenerationFailure && e.code === 'invalid_result');
+        }
+      }
+    });
+
     it('합법적인 중첩 목록과 목록 안 인용은 그대로 목록·인용으로 읽힌다', () => {
       for (const value of [
         '- a\n- b\n  - b1\n    - b2\n- c\n\n1. one\n2. two\n   1. two-a\n3. three',
@@ -369,7 +475,7 @@ describe('assemble', () => {
     });
 
     it('www·이메일·느낌표 링크를 막는다', () => {
-      assert.equal(probe('xwww.evil.com and _www.evil.com_'), 'x and _');
+      assert.equal(probe('xwww.evil.com and _www.evil.com_'), 'x  and _');
       assert.equal(probe('mail evil@phish.com'), 'mail evil\\@phish.com');
       assert.equal(probe('x `evil@phish.com` y'), 'x evil\\@phish.com y');
       assert.equal(probe('!{{commit:C1}}'), '\\![a1b2c3d](https://github.com/o/r/commit/a1b2c3d4e5f6)');

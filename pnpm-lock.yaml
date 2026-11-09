@@ -17,6 +17,9 @@ importers:
       linkedom:
         specifier: ^0.18.15
         version: 0.18.15
+      marked:
+        specifier: 17.0.6
+        version: 17.0.6
       postgres:
         specifier: 3.4.9
         version: 3.4.9
@@ -36,9 +39,6 @@ importers:
       esbuild:
         specifier: ^0.25.0
         version: 0.25.12
-      marked:
-        specifier: 17.0.6
-        version: 17.0.6
       typescript:
         specifier: ^5.8.0
         version: 5.9.3
