@@ -70,6 +70,9 @@ const createMemoryJobs = (initialStatus = 'queued') => {
       Object.assign(state, { status: 'failed', errorCode });
       return true;
     },
+    // 할당량 연동은 run-job 에 연결할 때 실제 동작으로 대체
+    reserveQuota: async () => 'reserved',
+    addUsage: async () => {},
   };
 
   return { jobs, state };

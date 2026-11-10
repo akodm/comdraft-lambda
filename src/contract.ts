@@ -34,6 +34,7 @@ export type GenerationErrorCode =
   | 'llm_failed'
   | 'invalid_result'
   | 'runner_unavailable'
+  | 'quota_exceeded'
   | 'internal';
 
 // 요청 본문 검증 (API Gateway 모델 검증을 거치지만 Lambda 에서도 한 번 더 확인)

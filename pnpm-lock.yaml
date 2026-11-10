@@ -17,6 +17,9 @@ importers:
       '@mozilla/readability':
         specifier: ^0.6.0
         version: 0.6.0
+      dayjs:
+        specifier: 1.11.23
+        version: 1.11.23
       linkedom:
         specifier: ^0.18.15
         version: 0.18.15
@@ -340,6 +343,9 @@ packages:
   cssomnom@0.1.11:
     resolution: {integrity: sha512-P4RkO1Sq2Ual77xypEmAc4MkM5k2Ha4UwtBPCOpJmXculGCYPgzsU/xnOCy084esZaPePgGkkJg4Il/HE7GS5A==}
     engines: {node: '>=20.0.0'}
+
+  dayjs@1.11.23:
+    resolution: {integrity: sha512-QDTCU0M0MxR3hQfnlDJfwekQiaanm1ubOD231u73WBckQ/fsamwRLiE2GBz6D3a/xF1NgfiDLJjXBa1hYOYTtQ==}
 
   dom-serializer@2.0.0:
     resolution: {integrity: sha512-wIkAryiqt/nV5EQKqQpo3SToSOV9J0DnbJqwK7Wv/Trc92zIAYZ4FlMu+JPFW1DfGFt81ZTCGgDEabffXeLyJg==}
@@ -745,6 +751,8 @@ snapshots:
   css-what@8.0.0: {}
 
   cssomnom@0.1.11: {}
+
+  dayjs@1.11.23: {}
 
   dom-serializer@2.0.0:
     dependencies:

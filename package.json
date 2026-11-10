@@ -22,6 +22,7 @@
     "@anthropic-ai/sdk": "^1.6.0",
     "@aws-sdk/client-sts": "^3.1165.0",
     "@mozilla/readability": "^0.6.0",
+    "dayjs": "1.11.23",
     "linkedom": "^0.18.15",
     "marked": "17.0.6",
     "postgres": "3.4.9",

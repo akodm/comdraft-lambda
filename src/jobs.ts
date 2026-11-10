@@ -1,8 +1,15 @@
 import type {
   GenerationErrorCode,
+  GenerationStatus,
   GenerationStep,
 } from './contract.ts';
 import type { Database } from './db.ts';
+import {
+  getJobUsage,
+  getQuotaWeek,
+  isWithinAllowance,
+  type QuotaPlan,
+} from './quota.ts';
 
 /**
  * 작성 작업(comdraft.draft_prompt) 상태 전이
@@ -38,7 +45,53 @@ export interface JobStore {
   complete: (jobId: string, result: string) => Promise<boolean>;
   // 실패 처리 (진행 중인 작업만, 사유 코드만 남김)
   fail: (jobId: string, errorCode: GenerationErrorCode) => Promise<boolean>;
+  // 예상 사용량을 기록하고 이번 주 남은 양으로 시작할 수 있는지 판정 (사용자별 advisory lock 트랜잭션)
+  reserveQuota: (
+    jobId: string,
+    estimate: number,
+    now: Date,
+  ) => Promise<QuotaReservation>;
+  // 사용한 토큰을 누적 (0 이하는 무시)
+  addUsage: (jobId: string, tokens: number) => Promise<void>;
 }
+
+// reserved: 시작 가능, exceeded: 남은 양 초과, no_plan: 사용자 등급의 정책 행 없음
+export type QuotaReservation = 'reserved' | 'exceeded' | 'no_plan';
+
+// 작업 → 초안 → 사용자 → 정책 조회 결과 (postgres 는 numeric 을 문자열로 돌려줌)
+interface PlanRow {
+  userId: string;
+  role: string;
+  weeklyTokenLimit: number;
+  overrunRatio: string;
+  resetTimezone: string;
+  resetWeekday: number;
+  resetHour: number;
+}
+
+interface UsageRow {
+  status: GenerationStatus;
+  estimatedTokens: number | null;
+  usedTokens: number;
+  errorCode: string | null;
+}
+
+// jsonb 컬럼 값을 문자열 배열로 (드라이버가 문자열로 주더라도 파싱하고, 형식이 다르면 빈 배열)
+const toUrlList = (value: unknown): string[] => {
+  let parsed = value;
+
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch {
+      return [];
+    }
+  }
+
+  return Array.isArray(parsed)
+    ? parsed.filter((url): url is string => typeof url === 'string')
+    : [];
+};
 
 export const createJobStore = (sql: Database): JobStore => ({
   markRunning: async (jobId) => {
@@ -56,7 +109,7 @@ export const createJobStore = (sql: Database): JobStore => ({
     const [row] = await sql<JobContext[]>`
       select p.prompt, p.tone, p.post_type as "postType", p.length,
         p.required_blocks as "requiredBlocks", p.locale, p.commit_shas as "commitShas",
-        coalesce((select array_agg(l.url order by l.created_at) from comdraft.draft_reference_link l where l.draft_id = p.draft_id), '{}') as "referenceUrls",
+        p.reference_urls as "referenceUrls",
         r.owner_login as owner, r.name as repo
       from comdraft.draft_prompt p
       join comdraft.draft d on d.id = p.draft_id
@@ -65,7 +118,7 @@ export const createJobStore = (sql: Database): JobStore => ({
       limit 1
     `;
 
-    return row ?? null;
+    return row ? { ...row, referenceUrls: toUrlList(row.referenceUrls) } : null;
   },
 
   markStep: async (jobId, step) => {
@@ -99,5 +152,87 @@ export const createJobStore = (sql: Database): JobStore => ({
     `;
 
     return rows.length > 0;
+  },
+
+  reserveQuota: async (jobId, estimate, now) =>
+    sql.begin(async (tx) => {
+      // 같은 사용자의 동시 요청이 검사와 기록 사이에 끼어들지 않도록 사용자 id 로 잠금 (트랜잭션이 끝나면 해제)
+      const [owner] = await tx<{ userId: string }[]>`
+        select d.user_id as "userId"
+        from comdraft.draft_prompt p
+        join comdraft.draft d on d.id = p.draft_id
+        where p.id = ${jobId}
+      `;
+
+      if (!owner) {
+        return 'no_plan';
+      }
+
+      await tx`select pg_advisory_xact_lock(hashtext(${owner.userId}))`;
+
+      const [row] = await tx<PlanRow[]>`
+        select d.user_id as "userId", q.role,
+          q.weekly_token_limit as "weeklyTokenLimit",
+          q.overrun_ratio as "overrunRatio",
+          q.reset_timezone as "resetTimezone",
+          q.reset_weekday as "resetWeekday",
+          q.reset_hour as "resetHour"
+        from comdraft.draft_prompt p
+        join comdraft.draft d on d.id = p.draft_id
+        join comdraft."user" u on u.id = d.user_id
+        join comdraft.quota_plan q on q.role = u.role
+        where p.id = ${jobId}
+      `;
+
+      if (!row) {
+        return 'no_plan';
+      }
+
+      const plan: QuotaPlan = {
+        role: row.role,
+        weeklyTokenLimit: Number(row.weeklyTokenLimit),
+        overrunRatio: Number(row.overrunRatio),
+        resetTimezone: row.resetTimezone,
+        resetWeekday: Number(row.resetWeekday),
+        resetHour: Number(row.resetHour),
+      };
+      const week = getQuotaWeek(now, plan);
+
+      // 이번 주 이 사용자의 다른 작업 사용량 (이 작업은 제외)
+      const others = await tx<UsageRow[]>`
+        select p.status, p.estimated_tokens as "estimatedTokens",
+          p.used_tokens as "usedTokens", p.error_code as "errorCode"
+        from comdraft.draft_prompt p
+        join comdraft.draft d on d.id = p.draft_id
+        where d.user_id = ${row.userId}
+          and p.created_at >= ${week.start}
+          and p.id <> ${jobId}
+      `;
+      const used = others.reduce((sum, job) => sum + getJobUsage(job), 0);
+      const remaining = plan.weeklyTokenLimit - used;
+
+      // 허용 여부와 상관없이 예상량은 남김 (거부된 작업은 getJobUsage 가 0 으로 셈)
+      await tx`
+        update comdraft.draft_prompt
+        set estimated_tokens = ${estimate}
+        where id = ${jobId}
+      `;
+
+      return isWithinAllowance(estimate, remaining, plan)
+        ? 'reserved'
+        : 'exceeded';
+    }),
+
+  addUsage: async (jobId, tokens) => {
+    if (tokens <= 0) {
+      return;
+    }
+
+    // 단일 UPDATE 라 트랜잭션 없이 원자적으로 누적
+    await sql`
+      update comdraft.draft_prompt
+      set used_tokens = used_tokens + ${tokens}
+      where id = ${jobId}
+    `;
   },
 });
