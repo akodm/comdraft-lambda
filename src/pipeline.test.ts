@@ -4,6 +4,7 @@ import type { z } from 'zod';
 import type { CommitDetail } from './github.ts';
 import type { JobContext } from './jobs.ts';
 import type { PreparedLink } from './generation/links.ts';
+import { estimateTokens } from './generation/limits.ts';
 import type { LlmClient } from './generation/llm.ts';
 import type { Analysis, Plan } from './generation/schemas.ts';
 import {
@@ -72,7 +73,11 @@ interface ParseCall {
   user: string;
   effort: string;
   maxTokens: number;
+  onUsage?: (tokens: number) => void | Promise<void>;
 }
+
+// 가짜 LLM 이 호출마다 보고하는 사용량
+const CALL_USAGE = 100;
 
 const fakeLlm = (plan: Plan, analysis: Analysis, markdown: string) => {
   const parses: ParseCall[] = [];
@@ -85,14 +90,17 @@ const fakeLlm = (plan: Plan, analysis: Analysis, markdown: string) => {
       schema: z.ZodType<T>;
       effort: 'low' | 'medium';
       maxTokens: number;
+      onUsage?: (tokens: number) => void | Promise<void>;
     }) => {
       parses.push(req);
+      await req.onUsage?.(CALL_USAGE);
       const result = parseIndex === 0 ? plan : analysis;
       parseIndex += 1;
       return result as T;
     },
     write: async (req) => {
       writes.push(req);
+      await req.onUsage?.(CALL_USAGE);
       return markdown;
     },
   };
@@ -111,14 +119,35 @@ const run = async (
     llm,
     fetchLinks: options.fetchLinks ?? (async () => LINKS),
   });
+  const usage: number[] = [];
   const input: PipelineInput = {
     context: { ...CONTEXT, ...options.context },
     commits: options.commits ?? COMMITS,
+    onUsage: async (tokens) => {
+      usage.push(tokens);
+    },
   };
-  const classified = await pipeline.classify(input);
+  const prepared = await pipeline.prepare(input);
+  const estimate = pipeline.estimate(input, prepared);
+  const classified = await pipeline.classify(input, prepared);
   const analyzed = await pipeline.analyze(input, classified);
   const markdown = await pipeline.write(input, analyzed);
-  return { classified, analyzed, markdown };
+  return { prepared, estimate, classified, analyzed, markdown, usage };
+};
+
+// 준비와 예상량만 계산한다 (Claude 는 부르지 않음)
+const prepareOnly = async (
+  options: { context?: Partial<JobContext>; links?: PreparedLink[] } = {},
+) => {
+  const { llm, parses, writes } = fakeLlm(PLAN, ANALYSIS, MARKDOWN);
+  const pipeline = createClaudePipeline({ llm, fetchLinks: async () => options.links ?? LINKS });
+  const input: PipelineInput = {
+    context: { ...CONTEXT, ...options.context },
+    commits: COMMITS,
+    onUsage: async () => {},
+  };
+  const prepared = await pipeline.prepare(input);
+  return { prepared, estimate: pipeline.estimate(input, prepared), calls: parses.length + writes.length };
 };
 
 describe('createClaudePipeline', () => {
@@ -203,5 +232,31 @@ describe('createClaudePipeline', () => {
     assert.deepEqual(classified.plan.sections[0].links, []);
     assert.ok(!parses[0].user.includes('example.com/post'));
     assert.ok(markdown.includes(':::blank'));
+  });
+
+  it('준비와 예상량 계산은 Claude 를 부르지 않는다', async () => {
+    const { prepared, estimate, calls } = await prepareOnly();
+
+    assert.equal(calls, 0);
+    assert.deepEqual(prepared.commits.map((commit) => commit.id), ['C1', 'C2']);
+    assert.deepEqual(prepared.links, LINKS);
+    assert.ok(estimate > 0);
+  });
+
+  it('예상량은 링크 본문과 글 길이에 따라 커진다', async () => {
+    const text = '참고 '.repeat(500);
+    const withoutLinks = await prepareOnly({ links: [] });
+    const withLinks = await prepareOnly({ links: [{ ...LINKS[0], text }] });
+    const long = await prepareOnly({ links: [], context: { length: 'long' } });
+
+    assert.equal(withLinks.estimate, withoutLinks.estimate + estimateTokens(text));
+    assert.ok(long.estimate > withoutLinks.estimate);
+  });
+
+  it('모든 Claude 호출의 사용량을 onUsage 로 보고한다', async () => {
+    const { llm } = fakeLlm(PLAN, ANALYSIS, MARKDOWN);
+    const { usage } = await run(llm);
+
+    assert.deepEqual(usage, [CALL_USAGE, CALL_USAGE, CALL_USAGE]);
   });
 });

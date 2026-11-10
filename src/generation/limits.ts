@@ -1,3 +1,5 @@
+import type { Length } from '../prompts/types.ts';
+
 // 커밋 메시지 한 개에서 넣는 최대 글자 수
 export const MAX_MESSAGE_CHARS = 1_000;
 // 기획 단계에 보내는 커밋 카탈로그 토큰 상한 (넘으면 최근 커밋부터 hunk 줄을 줄인다)
@@ -14,6 +16,14 @@ export const MAX_HUNK_LINE_CHARS = 1_000;
 export const MESSAGE_REDACT_MARGIN = 512;
 // 분석 단계에 보내는 hunk 합계 토큰 상한
 export const HUNK_TOKEN_BUDGET = 40_000;
+// 할당량 예상량에 넣는 단계별 출력 여유분
+export const ESTIMATE_PLAN_OUTPUT = 3_000;
+export const ESTIMATE_ANALYSIS_OUTPUT = 6_000;
+export const ESTIMATE_WRITE_OUTPUT: Readonly<Record<Length, number>> = {
+  short: 6_000,
+  medium: 9_000,
+  long: 14_000,
+};
 // 초안에 삽입하는 코드 블록 최대 줄 수
 export const MAX_CODE_LINES = 40;
 

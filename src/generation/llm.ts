@@ -29,6 +29,9 @@ export interface LlmOptions {
 // 사고 깊이 (adaptive thinking 은 기본 켜짐이라 thinking 은 보내지 않고 effort 로만 조절)
 export type Effort = 'low' | 'medium';
 
+// 응답 하나를 받을 때마다 그 응답의 사용 토큰을 넘김 (할당량 기록용)
+export type OnUsage = (tokens: number) => void | Promise<void>;
+
 export interface LlmClient {
   parse: <T>(req: {
     system: string;
@@ -36,14 +39,23 @@ export interface LlmClient {
     schema: z.ZodType<T>;
     effort: Effort;
     maxTokens: number;
+    onUsage?: OnUsage;
   }) => Promise<T>;
   write: (req: {
     system: string;
     user: string;
     effort: Effort;
     maxTokens: number;
+    onUsage?: OnUsage;
   }) => Promise<string>;
 }
+
+// 사용량 = 입력 + 출력 + 캐시 생성 + 캐시 읽기 (없는 항목은 0)
+export const sumUsage = (usage: Anthropic.Usage): number =>
+  usage.input_tokens +
+  usage.output_tokens +
+  (usage.cache_creation_input_tokens ?? 0) +
+  (usage.cache_read_input_tokens ?? 0);
 
 const fail = () => new GenerationFailure('llm_failed');
 const timeout = () => new GenerationFailure('timeout');
@@ -81,6 +93,7 @@ const assertCompleted = (stopReason: string | null) => {
  * - SDK 자동 재시도는 끄고, 재시도할 수 있는 오류에 한해 새 시도를 온전히 할 시간이 있을 때만 한 번 더 한다
  * - 남은 시간 때문에 끊긴 호출은 timeout, 나머지 실패는 llm_failed
  * - SDK 오류 원문(요청·응답 내용이 섞일 수 있음)은 버리고 사유 코드만 남김
+ * - 받은 응답의 검사(거절, 토큰 초과 등)는 사용량을 보고한 뒤 호출한 쪽에서 한다
  */
 const callWithDeadline = async <T>(
   { remainingTimeMs, sleep = defaultSleep }: LlmOptions,
@@ -98,11 +111,6 @@ const callWithDeadline = async <T>(
     try {
       return await run({ timeout: budget, maxRetries: 0, signal: controller.signal });
     } catch (error) {
-      // 응답을 받았지만 쓸 수 없는 경우 (거절, 토큰 초과 등)
-      if (error instanceof GenerationFailure) {
-        throw error;
-      }
-
       const shortened = budget < LLM_TIMEOUT_MS;
       if (
         controller.signal.aborted ||
@@ -128,13 +136,24 @@ const callWithDeadline = async <T>(
   }
 };
 
+/**
+ * 응답을 받은 뒤 사용량부터 보고한다
+ * - 재시도 판단(callWithDeadline) 밖에서 부르므로, 기록 실패가 llm_failed 로 바뀌거나 호출을 다시 하게 만들지 않는다
+ * - 거절·토큰 초과 응답도 토큰은 쓴 것이라 검사보다 먼저 보고한다
+ */
+const reportUsage = async (message: { usage: Anthropic.Usage }, onUsage?: OnUsage) => {
+  if (onUsage) {
+    await onUsage(sumUsage(message.usage));
+  }
+};
+
 export const createAnthropicLlm = (
   client: Anthropic,
   options: LlmOptions,
 ): LlmClient => ({
-  parse: ({ system, user, schema, effort, maxTokens }) =>
-    callWithDeadline(options, async (requestOptions) => {
-      const message = await client.messages.parse(
+  parse: async ({ system, user, schema, effort, maxTokens, onUsage }) => {
+    const message = await callWithDeadline(options, (requestOptions) =>
+      client.messages.parse(
         {
           model: GENERATION_MODEL,
           max_tokens: maxTokens,
@@ -143,18 +162,20 @@ export const createAnthropicLlm = (
           output_config: { effort, format: zodOutputFormat(schema) },
         },
         requestOptions,
-      );
+      ),
+    );
 
-      assertCompleted(message.stop_reason);
-      if (message.parsed_output == null) {
-        throw fail();
-      }
-      return message.parsed_output;
-    }),
+    await reportUsage(message, onUsage);
+    assertCompleted(message.stop_reason);
+    if (message.parsed_output == null) {
+      throw fail();
+    }
+    return message.parsed_output;
+  },
 
-  write: ({ system, user, effort, maxTokens }) =>
-    callWithDeadline(options, async (requestOptions) => {
-      const message = await client.messages
+  write: async ({ system, user, effort, maxTokens, onUsage }) => {
+    const message = await callWithDeadline(options, (requestOptions) =>
+      client.messages
         .stream(
           {
             model: GENERATION_MODEL,
@@ -165,16 +186,18 @@ export const createAnthropicLlm = (
           },
           requestOptions,
         )
-        .finalMessage();
+        .finalMessage(),
+    );
 
-      assertCompleted(message.stop_reason);
-      // thinking 블록이 앞에 올 수 있어 text 블록만 이어 붙임
-      const text = message.content
-        .map((block) => (block.type === 'text' ? block.text : ''))
-        .join('');
-      if (text.trim() === '') {
-        throw fail();
-      }
-      return text;
-    }),
+    await reportUsage(message, onUsage);
+    assertCompleted(message.stop_reason);
+    // thinking 블록이 앞에 올 수 있어 text 블록만 이어 붙임
+    const text = message.content
+      .map((block) => (block.type === 'text' ? block.text : ''))
+      .join('');
+    if (text.trim() === '') {
+      throw fail();
+    }
+    return text;
+  },
 });

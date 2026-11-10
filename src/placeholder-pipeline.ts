@@ -16,6 +16,9 @@ const escapeMarkdown = (text: string) => {
 
 // [임시] LLM 없이 커밋 정보로 결과 뼈대를 만드는 단계 (인프라 연결 확인용)
 export const createPlaceholderPipeline = (): Pipeline => ({
+  // Claude 를 부르지 않으므로 준비물도 예상량도 없다
+  prepare: async () => ({}),
+  estimate: () => 0,
   classify: async ({ commits }) => commits.map(({ sha }) => sha),
   analyze: async (_input, classified) => classified,
   write: async ({ context, commits }) => {

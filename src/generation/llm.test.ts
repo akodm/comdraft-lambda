@@ -285,3 +285,87 @@ describe('createAnthropicLlm 시간 예산', () => {
     });
   }
 });
+
+const USAGE = {
+  input_tokens: 10,
+  output_tokens: 20,
+  cache_creation_input_tokens: 3,
+  cache_read_input_tokens: 4,
+};
+
+describe('createAnthropicLlm 사용량 보고', () => {
+  for (const [method, call, ok] of [
+    [
+      'parse',
+      (llm: ReturnType<typeof createLlm>, onUsage: (tokens: number) => void) =>
+        llm.parse({ ...parseReq, onUsage }),
+      okParse,
+    ],
+    [
+      'write',
+      (llm: ReturnType<typeof createLlm>, onUsage: (tokens: number) => void) =>
+        llm.write({ ...writeReq, onUsage }),
+      okWrite,
+    ],
+  ] as const) {
+    it(`${method}: 사용량은 네 항목 합`, async () => {
+      const { client } = fakeClient(() => ({ ...ok(), usage: USAGE }));
+      const reported: number[] = [];
+      await call(createAnthropicLlm(client), (tokens) => {
+        reported.push(tokens);
+      });
+      assert.deepEqual(reported, [37]);
+    });
+
+    it(`${method}: 캐시 항목이 없으면 0 으로 센다`, async () => {
+      const { client } = fakeClient(() => ({
+        ...ok(),
+        usage: { ...USAGE, cache_creation_input_tokens: null, cache_read_input_tokens: null },
+      }));
+      const reported: number[] = [];
+      await call(createAnthropicLlm(client), (tokens) => {
+        reported.push(tokens);
+      });
+      assert.deepEqual(reported, [30]);
+    });
+
+    it(`${method}: 재시도하면 실제로 받은 응답만 센다`, async () => {
+      const { client, calls } = fakeClient(
+        failThen([overloaded()], () => ({ ...ok(), usage: USAGE })),
+      );
+      const reported: number[] = [];
+      await call(createAnthropicLlm(client), (tokens) => {
+        reported.push(tokens);
+      });
+      assert.equal(calls.length, 2);
+      assert.deepEqual(reported, [37]);
+    });
+
+    it(`${method}: 거절 응답도 사용량은 남긴다`, async () => {
+      const { client } = fakeClient(() => ({ ...ok(), stop_reason: 'refusal', usage: USAGE }));
+      const reported: number[] = [];
+      await rejectsLlmFailed(
+        call(createAnthropicLlm(client), (tokens) => {
+          reported.push(tokens);
+        }),
+      );
+      assert.deepEqual(reported, [37]);
+    });
+  }
+
+  it('사용량 기록이 실패하면 llm_failed 로 바꾸지 않고 그대로 전달한다', async () => {
+    const { client, calls } = fakeClient(() => ({ ...okParse(), usage: USAGE }));
+    const dbError = new Error('db down');
+    await assert.rejects(
+      createAnthropicLlm(client).parse({
+        ...parseReq,
+        onUsage: async () => {
+          throw dbError;
+        },
+      }),
+      (error) => error === dbError,
+    );
+    // 응답을 받은 뒤의 실패라 다시 호출하지 않는다
+    assert.equal(calls.length, 1);
+  });
+});
