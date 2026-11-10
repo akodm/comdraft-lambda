@@ -7,5 +7,10 @@ database_url = "postgresql://comdraft.<project-ref>:<password>@aws-0-ap-northeas
 supabase_url             = "https://<project-ref>.supabase.co"
 supabase_publishable_key = "sb_publishable_..."
 
-# Anthropic API 키 (초안 생성용)
-anthropic_api_key = ""
+# Anthropic Workload Identity Federation (API 키 대신, 모두 비밀값이 아닌 ID)
+# Claude Console > Settings > Workload identity > Connect workload (AWS) 에서 만든 값
+anthropic_federation_rule_id = "fdrl_..."
+anthropic_organization_id    = "00000000-0000-0000-0000-000000000000"
+anthropic_service_account_id = "svac_..."
+# 규칙이 워크스페이스 하나만 허용하면 빈 값
+anthropic_workspace_id = ""

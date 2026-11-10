@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.6.0",
+    "@aws-sdk/client-sts": "^3.1165.0",
     "@mozilla/readability": "^0.6.0",
     "linkedom": "^0.18.15",
     "marked": "17.0.6",

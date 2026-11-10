@@ -1,15 +1,34 @@
-import Anthropic from '@anthropic-ai/sdk';
+import type Anthropic from '@anthropic-ai/sdk';
+import { GetWebIdentityTokenCommand, STSClient } from '@aws-sdk/client-sts';
 import type { Context } from 'aws-lambda';
 import { createBroadcaster } from './broadcast.ts';
-import { loadConfig } from './config.ts';
+import { loadConfig, type LambdaConfig } from './config.ts';
 import { parseGenerationRequest } from './contract.ts';
 import { getDatabase } from './db.ts';
 import { createCommitFetcher } from './github.ts';
 import { createJobStore } from './jobs.ts';
 import { createLinkFetch, fetchReferenceLinks } from './generation/links.ts';
-import { createAnthropicLlm, LLM_TIMEOUT_MS } from './generation/llm.ts';
+import { createAnthropicClient } from './generation/anthropic-client.ts';
+import { createAnthropicLlm } from './generation/llm.ts';
 import { createClaudePipeline } from './pipeline.ts';
 import { runJob, type RunJobOutcome } from './run-job.ts';
+
+// 같은 실행 환경(웜 스타트)에서는 클라이언트를 재사용해 교환한 Anthropic 토큰을 캐시로 씀
+let anthropicClient: Anthropic | null = null;
+
+const getAnthropicClient = (config: LambdaConfig) => {
+  if (!anthropicClient) {
+    // GetWebIdentityToken 은 리전 STS 엔드포인트에서만 제공됨
+    const sts = new STSClient({ region: config.awsRegion });
+
+    anthropicClient = createAnthropicClient(config.federation, async (request) => {
+      const output = await sts.send(new GetWebIdentityTokenCommand(request));
+      return output.WebIdentityToken;
+    });
+  }
+
+  return anthropicClient;
+};
 
 /**
  * API Gateway(REST, IAM 인증)가 비동기(Event)로 호출하는 진입점
@@ -30,13 +49,9 @@ export const handler = async (
   const config = loadConfig();
   const sql = getDatabase(config.databaseUrl);
 
-  // 클라이언트와 링크 요청 함수는 호출마다 한 번만 만든다
-  // 재시도는 남은 실행 시간을 아는 createAnthropicLlm 이 직접 하므로 SDK 자동 재시도는 끈다
-  const client = new Anthropic({
-    apiKey: config.anthropicApiKey,
-    timeout: LLM_TIMEOUT_MS,
-    maxRetries: 0,
-  });
+  // Anthropic 인증은 API 키 없이 Lambda 실행 역할로 연동 (Workload Identity Federation)
+  const client = getAnthropicClient(config);
+  // 링크 요청 함수는 호출마다 한 번만 만든다
   const linkFetch = createLinkFetch();
   const remainingTimeMs = () => context.getRemainingTimeInMillis();
 

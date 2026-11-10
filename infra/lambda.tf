@@ -26,6 +26,21 @@ resource "aws_iam_role" "lambda" {
   assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
 }
 
+# Anthropic Workload Identity Federation: 실행 역할로 서명된 웹 ID 토큰(JWT)을 받아 Anthropic 토큰으로 교환
+# - 계정 단위 설정 "Outbound web identity federation" 을 먼저 켜야 함 (IAM > Account settings, 수동)
+data "aws_iam_policy_document" "lambda_web_identity" {
+  statement {
+    actions   = ["sts:GetWebIdentityToken"]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "lambda_web_identity" {
+  name   = "anthropic-web-identity"
+  role   = aws_iam_role.lambda.id
+  policy = data.aws_iam_policy_document.lambda_web_identity.json
+}
+
 resource "aws_lambda_function" "generation" {
   function_name    = var.name
   description      = "comdraft AI 초안 작성 (구분 → 분석 → 작성)"
@@ -45,7 +60,11 @@ resource "aws_lambda_function" "generation" {
       DATABASE_URL             = var.database_url
       SUPABASE_URL             = var.supabase_url
       SUPABASE_PUBLISHABLE_KEY = var.supabase_publishable_key
-      ANTHROPIC_API_KEY        = var.anthropic_api_key
+      # Anthropic 인증은 API 키 대신 연동 규칙 ID 로 (비밀값 없음)
+      ANTHROPIC_FEDERATION_RULE_ID = var.anthropic_federation_rule_id
+      ANTHROPIC_ORGANIZATION_ID    = var.anthropic_organization_id
+      ANTHROPIC_SERVICE_ACCOUNT_ID = var.anthropic_service_account_id
+      ANTHROPIC_WORKSPACE_ID       = var.anthropic_workspace_id
     }
   }
 }

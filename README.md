@@ -36,7 +36,21 @@ Lambda 환경 변수는 Terraform(`infra/lambda.tf`)이 주입함. 값은 git �
 | `DATABASE_URL` | `database_url` (sensitive) | Supabase 트랜잭션 풀러(6543) 주소 |
 | `SUPABASE_URL` | `supabase_url` | Realtime Broadcast 전송용 |
 | `SUPABASE_PUBLISHABLE_KEY` | `supabase_publishable_key` | Broadcast 신호 전송용 공개 키 |
-| `ANTHROPIC_API_KEY` | `anthropic_api_key` (sensitive) | 초안 생성 모델 호출용 Anthropic API 키 |
+| `ANTHROPIC_FEDERATION_RULE_ID` | `anthropic_federation_rule_id` | Anthropic 연동 규칙 ID (`fdrl_...`) |
+| `ANTHROPIC_ORGANIZATION_ID` | `anthropic_organization_id` | Anthropic 조직 ID |
+| `ANTHROPIC_SERVICE_ACCOUNT_ID` | `anthropic_service_account_id` | 연동 규칙이 가리키는 서비스 계정 ID (`svac_...`) |
+| `ANTHROPIC_WORKSPACE_ID` | `anthropic_workspace_id` | 워크스페이스 ID (규칙이 워크스페이스 하나만 허용하면 빈 값) |
+
+Anthropic 인증은 API 키 없이 **Workload Identity Federation** 을 씀. Lambda 가 실행 역할로 AWS STS `GetWebIdentityToken` 을 호출해 받은 JWT 를 Anthropic 단기 토큰으로 교환함(SDK 가 캐시와 갱신을 처리). 위 값들은 모두 비밀값이 아닌 ID 이고, `ANTHROPIC_API_KEY` 는 쓰지 않음(설정돼 있으면 혼동의 원인이 되므로 넣지 말 것).
+
+### Anthropic 연동 설정 (최초 1회)
+
+1. AWS: IAM > Account settings 에서 **Outbound web identity federation** 을 켜고, 표시되는 **Get Token Issuer URL**(`https://<uuid>.tokens.sts.global.api.aws`)을 복사
+2. `terraform apply` 로 실행 역할에 `sts:GetWebIdentityToken` 권한을 붙인 뒤, 출력값 `lambda_role_arn` 확인
+3. Claude Console > Settings > Workload identity > **Connect workload** > AWS
+   - 발급자(issuer): 1의 Issuer URL, JWKS 는 discovery
+   - 규칙(rule): subject 를 `lambda_role_arn` 과 **정확히** 일치(끝에 `*` 없이), audience `https://api.anthropic.com`, scope `workspace:developer`, 토큰 수명 600초
+   - 만들어진 `fdrl_...`, `svac_...`, 조직 ID(와 필요하면 워크스페이스 ID)를 `infra/terraform.tfvars` 에 넣고 다시 `terraform apply`
 
 ## 배포
 
@@ -70,13 +84,13 @@ Lambda 환경 변수는 Terraform(`infra/lambda.tf`)이 주입함. 값은 git �
 
 1. 사용자가 comdraft 마이그레이션 `0011`(`draft_prompt.locale`)을 로컬과 운영에 적용 (0011 적용 전에는 작성 요청 INSERT 가 실패함)
 2. comdraft 를 빈칸 노드(`draftBlank`)와 함께 배포: **Lambda 보다 먼저** 배포해야 함. 노드가 없으면 `:::blank` 가 일반 문단으로 보임
-3. `infra/terraform.tfvars` 에 `anthropic_api_key` 를 넣고 `pnpm build` 후 `terraform apply` 로 Lambda 배포
+3. 위 "Anthropic 연동 설정" 을 마치고 `infra/terraform.tfvars` 에 연동 ID 를 넣은 뒤 `pnpm build` 후 `terraform apply` 로 Lambda 배포
 
 ## 주의
 
 - 런타임은 `nodejs22.x`: undici 8 이 Node 22.19 이상을 요구하므로, 배포 전에 AWS 의 nodejs22.x 런타임 패치 버전이 22.19 이상인지 확인할 것
-
-- `infra/terraform.tfstate` 에 Lambda 환경 변수(DB 주소, `ANTHROPIC_API_KEY` 등)가 평문으로 저장됨: 공유하거나 커밋하지 않음
+- `infra/terraform.tfstate` 에 Lambda 환경 변수(DB 주소 등)가 평문으로 저장됨: 공유하거나 커밋하지 않음 (Anthropic 은 연동 방식이라 키가 남지 않음)
+- Terraform IAM 사용자에게 실행 역할의 인라인 정책을 붙일 권한(`iam:PutRolePolicy` 등, `role/terraform-lambda-*` 범위)이 있어야 함
 - Lambda 실행 시간 제한(`lambda_timeout_seconds`)과 비동기 대기 시간(`lambda_max_event_age_seconds`)은
   comdraft 의 `GENERATION_LAMBDA_TIMEOUT_MS`, `GENERATION_QUEUED_TIMEOUT_MS` 와 맞출 것
 - 신규 계정은 Lambda 계정 동시성 한도가 10 이라 예약 동시성을 걸 수 없음: 한도 상향 전까지 `lambda_reserved_concurrency = -1`

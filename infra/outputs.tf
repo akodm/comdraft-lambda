@@ -11,3 +11,8 @@ output "invoker_user_name" {
 output "lambda_function_name" {
   value = aws_lambda_function.generation.function_name
 }
+
+output "lambda_role_arn" {
+  description = "Anthropic 연동 규칙의 subject 로 정확히 맞출 Lambda 실행 역할 ARN"
+  value       = aws_iam_role.lambda.arn
+}

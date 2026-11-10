@@ -31,10 +31,27 @@ variable "supabase_publishable_key" {
   type        = string
 }
 
-variable "anthropic_api_key" {
-  description = "Anthropic API 키 (초안 생성 모델 호출용)"
+# Anthropic Workload Identity Federation (API 키 대신 Lambda 실행 역할로 인증, 모두 비밀값이 아닌 ID)
+# Claude Console > Settings > Workload identity 에서 만든 연동 규칙의 값
+variable "anthropic_federation_rule_id" {
+  description = "Anthropic 연동 규칙 ID (fdrl_...)"
   type        = string
-  sensitive   = true
+}
+
+variable "anthropic_organization_id" {
+  description = "Anthropic 조직 ID (UUID)"
+  type        = string
+}
+
+variable "anthropic_service_account_id" {
+  description = "연동 규칙이 가리키는 Anthropic 서비스 계정 ID (svac_...)"
+  type        = string
+}
+
+variable "anthropic_workspace_id" {
+  description = "토큰을 받을 Anthropic 워크스페이스 ID (wrkspc_..., 규칙이 워크스페이스 하나만 허용하면 빈 값)"
+  type        = string
+  default     = ""
 }
 
 variable "lambda_timeout_seconds" {
