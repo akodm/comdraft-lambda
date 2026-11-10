@@ -169,6 +169,21 @@ describe('runJob', () => {
     assert.equal(signals.length, 0);
   });
 
+  it('작업의 초안이 삭제돼 맥락이 없으면 Claude 호출 없이 internal 로 실패한다', async () => {
+    const { pipeline, stages } = createUsagePipeline({ classify: 1_000, analyze: 2_000, write: 3_000 });
+    const { dependencies, state, signals } = createDependencies({ pipeline });
+    // 초안 삭제로 draft_id 가 null 이 되면 loadContext 의 초안 join 이 행을 찾지 못한다
+    dependencies.jobs.loadContext = async () => null;
+
+    assert.equal(await runJob('job-1', dependencies), 'failed');
+    assert.deepEqual(stages, []);
+    assert.equal(state.status, 'failed');
+    assert.equal(state.errorCode, 'internal');
+    assert.equal(state.estimatedTokens, null);
+    assert.equal(state.usedTokens, 0);
+    assert.equal(signals.at(-1)?.status, 'failed');
+  });
+
   it('GitHub 토큰이 만료되면 github_reauth 로 실패 처리한다', async () => {
     const { dependencies, state, signals } = createDependencies({
       fetchCommit: async () => {

@@ -90,7 +90,6 @@ export const runJob = async <P = unknown, C = unknown, A = unknown>(
     const reservation = await jobs.reserveQuota(
       jobId,
       pipeline.estimate(input, prepared),
-      new Date(),
     );
 
     // 초과는 예상량이 이미 기록됐으므로 반드시 실패로 끝내야 한다 (quota_exceeded 는 사용량 0 으로 셈)

@@ -45,12 +45,8 @@ export interface JobStore {
   complete: (jobId: string, result: string) => Promise<boolean>;
   // 실패 처리 (진행 중인 작업만, 사유 코드만 남김)
   fail: (jobId: string, errorCode: GenerationErrorCode) => Promise<boolean>;
-  // 예상 사용량을 기록하고 이번 주 남은 양으로 시작할 수 있는지 판정 (사용자별 advisory lock 트랜잭션)
-  reserveQuota: (
-    jobId: string,
-    estimate: number,
-    now: Date,
-  ) => Promise<QuotaReservation>;
+  // 예상 사용량을 기록하고 작업이 만들어진 주의 남은 양으로 시작할 수 있는지 판정 (사용자별 advisory lock 트랜잭션)
+  reserveQuota: (jobId: string, estimate: number) => Promise<QuotaReservation>;
   // 사용한 토큰을 누적 (0 이하는 무시)
   addUsage: (jobId: string, tokens: number) => Promise<void>;
 }
@@ -58,9 +54,8 @@ export interface JobStore {
 // reserved: 시작 가능, exceeded: 남은 양 초과, no_plan: 사용자 등급의 정책 행 없음
 export type QuotaReservation = 'reserved' | 'exceeded' | 'no_plan';
 
-// 작업 → 초안 → 사용자 → 정책 조회 결과 (postgres 는 numeric 을 문자열로 돌려줌)
+// 작업 → 사용자 → 정책 조회 결과 (postgres 는 numeric 을 문자열로 돌려줌)
 interface PlanRow {
-  userId: string;
   role: string;
   weeklyTokenLimit: number;
   overrunRatio: string;
@@ -154,34 +149,35 @@ export const createJobStore = (sql: Database): JobStore => ({
     return rows.length > 0;
   },
 
-  reserveQuota: async (jobId, estimate, now) =>
+  reserveQuota: async (jobId, estimate) =>
     sql.begin(async (tx) => {
-      // 같은 사용자의 동시 요청이 검사와 기록 사이에 끼어들지 않도록 사용자 id 로 잠금 (트랜잭션이 끝나면 해제)
-      const [owner] = await tx<{ userId: string }[]>`
-        select d.user_id as "userId"
+      // 작업의 사용자와 생성 시각 (사용량은 작업 행의 user_id 로 셈, 초안을 삭제해도 작업 행은 남음)
+      // → user_id 가 없는 행은 마이그레이션 0015 적용 후 배포 전까지 이전 Next.js 코드가 만든 작업뿐이라 초안의 사용자로 대신함
+      //   (초안까지 없으면 사용자를 알 수 없으므로 no_plan)
+      const [owner] = await tx<{ userId: string | null; createdAt: Date }[]>`
+        select coalesce(p.user_id, d.user_id) as "userId", p.created_at as "createdAt"
         from comdraft.draft_prompt p
-        join comdraft.draft d on d.id = p.draft_id
+        left join comdraft.draft d on d.id = p.draft_id
         where p.id = ${jobId}
       `;
 
-      if (!owner) {
+      if (!owner?.userId) {
         return 'no_plan';
       }
 
+      // 같은 사용자의 동시 요청이 검사와 기록 사이에 끼어들지 않도록 사용자 id 로 잠금 (트랜잭션이 끝나면 해제)
       await tx`select pg_advisory_xact_lock(hashtext(${owner.userId}))`;
 
       const [row] = await tx<PlanRow[]>`
-        select d.user_id as "userId", q.role,
+        select q.role,
           q.weekly_token_limit as "weeklyTokenLimit",
           q.overrun_ratio as "overrunRatio",
           q.reset_timezone as "resetTimezone",
           q.reset_weekday as "resetWeekday",
           q.reset_hour as "resetHour"
-        from comdraft.draft_prompt p
-        join comdraft.draft d on d.id = p.draft_id
-        join comdraft."user" u on u.id = d.user_id
+        from comdraft."user" u
         join comdraft.quota_plan q on q.role = u.role
-        where p.id = ${jobId}
+        where u.id = ${owner.userId}
       `;
 
       if (!row) {
@@ -196,16 +192,17 @@ export const createJobStore = (sql: Database): JobStore => ({
         resetWeekday: Number(row.resetWeekday),
         resetHour: Number(row.resetHour),
       };
-      const week = getQuotaWeek(now, plan);
+      // 작업은 실행 시각이 아니라 만들어진 시각이 속한 주에 들어감 (주 경계 직전에 요청하고 직후에 실행돼도 같은 주)
+      const week = getQuotaWeek(owner.createdAt, plan);
 
-      // 이번 주 이 사용자의 다른 작업 사용량 (이 작업은 제외)
+      // 그 주에 이 사용자가 만든 다른 작업 사용량 (이 작업은 제외)
       const others = await tx<UsageRow[]>`
         select p.status, p.estimated_tokens as "estimatedTokens",
           p.used_tokens as "usedTokens", p.error_code as "errorCode"
         from comdraft.draft_prompt p
-        join comdraft.draft d on d.id = p.draft_id
-        where d.user_id = ${row.userId}
+        where p.user_id = ${owner.userId}
           and p.created_at >= ${week.start}
+          and p.created_at < ${week.resetsAt}
           and p.id <> ${jobId}
       `;
       const used = others.reduce((sum, job) => sum + getJobUsage(job), 0);
