@@ -1,22 +1,54 @@
 # comdraft-lambda
 
-comdraft 의 AI 초안 작성 Lambda 와 AWS 인프라(Terraform).
+**[comdraft](https://github.com/akodm/comdraft) 의 AI 초안 작성 Lambda 와 AWS 인프라 (Terraform)**
+
+서비스: **[comdraft.vercel.app](https://comdraft.vercel.app)** · 웹 앱: [akodm/comdraft](https://github.com/akodm/comdraft)
+
+comdraft 사용자가 커밋을 고르고 작성 요청을 보내면, 이 Lambda 가 GitHub 에서 커밋 상세를 읽고 Claude 로 기술 블로그 초안을 씁니다. 결과와 진행 상황은 DB 와 Supabase Realtime 으로 comdraft 화면에 전달됩니다.
+
+## 하는 일
 
 ```text
 Next.js 서버 (comdraft) ──SigV4──▶ API Gateway (REST, IAM 인증, 스로틀)
                                       │ 비동기(Event) 호출, 즉시 202
                                       ▼
                                Lambda (Node.js 22, 이 저장소)
-                                 준비 → 기획 → 분석 → 작성 → 조립 (Claude Haiku 5.5)
+                                 준비 → 예상량 검사 → 기획 → 분석 → 작성 → 조립 (Claude Haiku 5.5)
                                  단계마다 DB(draft_prompt) 갱신 + Supabase Realtime Broadcast
 ```
 
+1. **준비**: GitHub 에서 커밋 상세와 코드 변경을 가져오고, 비밀 파일은 빼고 비밀값은 가립니다. 참고 링크는 SSRF 방어를 거쳐 직접 가져옵니다.
+2. **예상량 검사**: 준비한 입력으로 사용할 토큰을 추정하고, 사용자의 주간 할당량(`quota_plan`)을 넘으면 Claude 를 부르지 않고 거부합니다. 같은 사용자의 동시 요청은 DB 잠금으로 줄 세웁니다.
+3. **기획 → 분석 → 작성**: Claude Haiku 5.5(`claude-haiku-5-5`)로 글의 구조를 잡고, 코드 변경을 분석하고, 본문을 씁니다. 호출마다 실제 사용 토큰을 기록합니다.
+4. **조립**: 코드, 커밋 링크, 참고 링크를 모델 출력 대신 원문으로 바꿔 넣고, 모델이 직접 쓴 링크와 HTML 은 무력화합니다.
+
+- 커밋 코드와 참고 링크 본문은 메모리에서만 쓰고 DB, 로그 어디에도 저장하지 않습니다.
 - 사용하지 않는 AWS 서비스: Step Functions, VPC, CloudWatch Logs(실행 역할에 `logs:*` 권한 없음), SQS/SNS
-- 요청/신호 형식과 오류 코드는 comdraft 의 `lib/generation/contract.ts` 와 `src/contract.ts` 를 같게 유지
-- 커밋 코드와 참고 링크 본문은 메모리에서만 사용하고 DB, 로그 어디에도 저장하지 않음
-- 작성 단계: 준비(커밋 상세 조회, 참고 링크 수집) → 기획 → 분석 → 작성 → 조립
-  - 모델은 Claude Haiku 5.5(`claude-haiku-5-5`)
-  - 참고 링크는 Lambda 가 직접 가져오며, SSRF 방어를 적용함
+- 요청/신호 형식과 오류 코드는 comdraft 의 `lib/generation/contract.ts` 와 이 저장소의 `src/contract.ts` 를 같게 유지합니다.
+
+## 기술 스택
+
+| 영역 | 사용 기술 |
+| --- | --- |
+| 런타임 | Node.js 22, TypeScript (esbuild 로 단일 번들) |
+| AI | Anthropic SDK, Claude Haiku 5.5, Workload Identity Federation (API 키 없음) |
+| 데이터 | Supabase Postgres (`postgres`), Supabase Realtime Broadcast |
+| 날짜 | dayjs (할당량 주 경계, Asia/Seoul) |
+| 인프라 | AWS API Gateway, Lambda, IAM, Terraform |
+| 테스트 | `node:test` |
+
+## 폴더 구조
+
+```text
+src/handler.ts       Lambda 진입점
+src/run-job.ts       작업 한 건 실행 (상태 갱신, 할당량 예약, 실패 처리)
+src/pipeline.ts      준비 → 기획 → 분석 → 작성 → 조립
+src/generation/      커밋 준비, 링크 수집, 비밀값 처리, 예상량, Claude 호출, 조립
+src/prompts/         단계별 프롬프트 (한국어·영어)
+src/jobs.ts          작업 저장소 (DB)
+src/quota.ts         주간 할당량 규칙
+infra/               Terraform (API Gateway, Lambda, IAM)
+```
 
 ## 개발
 
@@ -78,13 +110,13 @@ Anthropic 인증은 API 키 없이 **Workload Identity Federation** 을 씀. Lam
    aws iam create-access-key --user-name comdraft-generation-invoker --profile comdraft-main-iam
    ```
 
-## 배포 순서 (AI 초안 프롬프트 변경)
+## 배포 순서
 
-의존성 때문에 아래 순서를 지킴.
+comdraft 와 함께 바뀌는 변경은 아래 순서를 지킵니다.
 
-1. 사용자가 comdraft 마이그레이션 `0011`(`draft_prompt.locale`)을 로컬과 운영에 적용 (0011 적용 전에는 작성 요청 INSERT 가 실패함)
-2. comdraft 를 빈칸 노드(`draftBlank`)와 함께 배포: **Lambda 보다 먼저** 배포해야 함. 노드가 없으면 `:::blank` 가 일반 문단으로 보임
-3. 위 "Anthropic 연동 설정" 을 마치고 `infra/terraform.tfvars` 에 연동 ID 를 넣은 뒤 `pnpm build` 후 `terraform apply` 로 Lambda 배포
+1. comdraft 의 DB 마이그레이션을 로컬과 운영에 적용
+2. comdraft(Next.js) 배포: Lambda 가 읽는 작업 기록(예: `draft_prompt.reference_urls`)을 새 코드가 먼저 쓰도록 **Lambda 보다 먼저**
+3. `pnpm build` 후 `infra` 에서 `terraform apply` 로 Lambda 배포
 
 ## 주의
 
