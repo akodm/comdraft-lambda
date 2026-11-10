@@ -4,6 +4,7 @@ import type { z } from 'zod';
 import type { CommitDetail } from './github.ts';
 import type { JobContext } from './jobs.ts';
 import type { PreparedLink } from './generation/links.ts';
+import { estimateJobTokens } from './generation/estimate.ts';
 import { estimateTokens } from './generation/limits.ts';
 import type { LlmClient } from './generation/llm.ts';
 import type { Analysis, Plan } from './generation/schemas.ts';
@@ -11,6 +12,8 @@ import {
   createClaudePipeline,
   type PipelineInput,
 } from './pipeline.ts';
+import { getPromptPack } from './prompts/index.ts';
+import { renderCatalog } from './prompts/render.ts';
 
 const CONTEXT: JobContext = {
   prompt: '지연 로딩 적용기를 써 줘',
@@ -240,7 +243,55 @@ describe('createClaudePipeline', () => {
     assert.equal(calls, 0);
     assert.deepEqual(prepared.commits.map((commit) => commit.id), ['C1', 'C2']);
     assert.deepEqual(prepared.links, LINKS);
-    assert.ok(estimate > 0);
+
+    // 실제 system 프롬프트·카탈로그·hunk 본문(커밋 두 개의 같은 PATCH)·링크·요청을 잰 값과 같다
+    const pack = getPromptPack('ko');
+    const hunkBody = PATCH.split('\n').slice(1).join('\n');
+    assert.equal(
+      estimate,
+      estimateJobTokens(
+        {
+          catalogTokens: estimateTokens(renderCatalog(prepared.commits)),
+          hunkTokens: estimateTokens(hunkBody) * 2,
+          linkTokens: estimateTokens(LINKS[0].text),
+          requestTokens: estimateTokens(CONTEXT.prompt),
+        },
+        'medium',
+        {
+          plan: estimateTokens(pack.plan.system),
+          analyze: estimateTokens(pack.analyze.system),
+          write: estimateTokens(pack.write.system),
+        },
+      ),
+    );
+  });
+
+  it('가린 hunk 본문은 예상량에 넣지 않는다', async () => {
+    const { llm } = fakeLlm(PLAN, ANALYSIS, MARKDOWN);
+    const pipeline = createClaudePipeline({ llm, fetchLinks: async () => [] });
+    const estimateFor = async (patch: string) => {
+      const input: PipelineInput = {
+        context: { ...CONTEXT, referenceUrls: [] },
+        commits: [{ ...COMMITS[1], files: [{ ...COMMITS[1].files[0], patch }] }],
+        onUsage: async () => {},
+      };
+      const prepared = await pipeline.prepare(input);
+      return {
+        estimate: pipeline.estimate(input, prepared),
+        catalog: estimateTokens(renderCatalog(prepared.commits)),
+        redacted: [...prepared.hunks.values()].every((hunk) => hunk.redacted),
+      };
+    };
+    const secret = `@@ -1 +1 @@\n+const key = 'ghp_${'a'.repeat(36)}';\n${'+// 설명\n'.repeat(50)}`;
+    const plain = await estimateFor(PATCH);
+    const hidden = await estimateFor(secret);
+
+    assert.equal(hidden.redacted, true);
+    // 가린 hunk 는 카탈로그 차이만큼만 달라지고 본문은 0 으로 센다
+    assert.equal(
+      hidden.estimate - hidden.catalog,
+      plain.estimate - plain.catalog - estimateTokens(PATCH.split('\n').slice(1).join('\n')),
+    );
   });
 
   it('예상량은 링크 본문과 글 길이에 따라 커진다', async () => {

@@ -28,11 +28,12 @@ const createAnthropicLlm = (client: Anthropic, options: Partial<LlmOptions> = {}
 
 // 가짜 SDK 클라이언트: 받은 요청과 옵션을 기록하고 정해 둔 응답(또는 오류)을 돌려준다
 const fakeClient = (reply: () => unknown) => {
-  const calls: { method: 'parse' | 'stream'; req: Req; options: Req }[] = [];
+  const calls: { method: 'create' | 'stream'; req: Req; options: Req }[] = [];
   const client = {
     messages: {
-      parse: async (req: Req, options: Req) => {
-        calls.push({ method: 'parse', req, options });
+      // 구조화 출력은 create 로 받아 직접 파싱하므로, 가짜도 원본 응답(text 블록)을 돌려준다
+      create: async (req: Req, options: Req) => {
+        calls.push({ method: 'create', req, options });
         return reply();
       },
       stream: (req: Req, options: Req) => {
@@ -45,6 +46,14 @@ const fakeClient = (reply: () => unknown) => {
 };
 
 const schema = z.object({ answer: z.string() });
+// 구조화 출력 응답 (모델이 돌려주는 원문 그대로)
+const jsonReply = (text: string, stop_reason = 'end_turn') => ({
+  stop_reason,
+  content: [
+    { type: 'thinking', thinking: 'hmm', signature: 's' },
+    { type: 'text', text },
+  ],
+});
 const parseReq = { system: 'sys', user: 'usr', schema, effort: 'low' as const, maxTokens: 8000 };
 const writeReq = { system: 'sys', user: 'usr', effort: 'medium' as const, maxTokens: 6000 };
 
@@ -58,16 +67,13 @@ const rejectsLlmFailed = async (promise: Promise<unknown>) =>
 
 describe('createAnthropicLlm.parse', () => {
   it('model·effort·max_tokens·format 을 보내고 sampling·thinking 은 보내지 않는다', async () => {
-    const { client, calls } = fakeClient(() => ({
-      stop_reason: 'end_turn',
-      parsed_output: { answer: 'ok' },
-    }));
+    const { client, calls } = fakeClient(() => jsonReply('{"answer":"ok"}'));
 
     const result = await createAnthropicLlm(client).parse(parseReq);
 
     assert.deepEqual(result, { answer: 'ok' });
     const { method, req, options } = calls[0];
-    assert.equal(method, 'parse');
+    assert.equal(method, 'create');
     assert.equal(req.model, GENERATION_MODEL);
     assert.equal(req.model, 'claude-haiku-5-5');
     assert.equal(req.max_tokens, 8000);
@@ -86,14 +92,24 @@ describe('createAnthropicLlm.parse', () => {
 
   for (const stop_reason of ['refusal', 'max_tokens']) {
     it(`stop_reason ${stop_reason} 는 llm_failed`, async () => {
-      const { client } = fakeClient(() => ({ stop_reason, parsed_output: { answer: 'x' } }));
+      const { client } = fakeClient(() => jsonReply('{"answer":"x"}', stop_reason));
       await rejectsLlmFailed(createAnthropicLlm(client).parse(parseReq));
     });
   }
 
-  it('parsed_output 이 null 이면 llm_failed', async () => {
-    const { client } = fakeClient(() => ({ stop_reason: 'end_turn', parsed_output: null }));
+  it('text 블록이 없으면 llm_failed', async () => {
+    const { client } = fakeClient(() => ({
+      stop_reason: 'end_turn',
+      content: [{ type: 'thinking', thinking: 'x', signature: 's' }],
+    }));
     await rejectsLlmFailed(createAnthropicLlm(client).parse(parseReq));
+  });
+
+  it('JSON 이 아니거나 스키마에 맞지 않으면 llm_failed 이고 원문을 남기지 않는다', async () => {
+    for (const text of ['secret-token 일반 문장', '{"answer":1}']) {
+      const { client } = fakeClient(() => jsonReply(text));
+      await rejectsLlmFailed(createAnthropicLlm(client).parse(parseReq));
+    }
   });
 
   it('SDK 가 던진 오류는 llm_failed 로 바꾸고 원문 메시지를 남기지 않는다', async () => {
@@ -157,7 +173,7 @@ describe('createAnthropicLlm.write', () => {
   });
 });
 
-const okParse = () => ({ stop_reason: 'end_turn', parsed_output: { answer: 'ok' } });
+const okParse = () => jsonReply('{"answer":"ok"}');
 const okWrite = () => ({ stop_reason: 'end_turn', content: [{ type: 'text', text: '글' }] });
 
 const rejectsTimeout = async (promise: Promise<unknown>) =>
@@ -262,7 +278,7 @@ describe('createAnthropicLlm 시간 예산', () => {
       const calls: Req[] = [];
       const client = {
         messages: {
-          parse: (_req: Req, options: Req) => {
+          create: (_req: Req, options: Req) => {
             calls.push(options);
             return waitForAbort(options);
           },
@@ -351,21 +367,39 @@ describe('createAnthropicLlm 사용량 보고', () => {
       );
       assert.deepEqual(reported, [37]);
     });
+
+    it(`${method}: 사용량 기록이 실패하면 llm_failed 로 바꾸지 않고 그대로 전달한다`, async () => {
+      const { client, calls } = fakeClient(() => ({ ...ok(), usage: USAGE }));
+      const dbError = new Error('db down');
+      await assert.rejects(
+        call(createAnthropicLlm(client), async () => {
+          throw dbError;
+        }),
+        (error) => error === dbError,
+      );
+      // 응답을 받은 뒤의 실패라 다시 호출하지 않는다
+      assert.equal(calls.length, 1);
+    });
   }
 
-  it('사용량 기록이 실패하면 llm_failed 로 바꾸지 않고 그대로 전달한다', async () => {
-    const { client, calls } = fakeClient(() => ({ ...okParse(), usage: USAGE }));
-    const dbError = new Error('db down');
-    await assert.rejects(
-      createAnthropicLlm(client).parse({
-        ...parseReq,
-        onUsage: async () => {
-          throw dbError;
-        },
-      }),
-      (error) => error === dbError,
-    );
-    // 응답을 받은 뒤의 실패라 다시 호출하지 않는다
-    assert.equal(calls.length, 1);
-  });
+  for (const [name, reply] of [
+    ['토큰 초과로 잘린 JSON', () => jsonReply('{"answer":"잘린', 'max_tokens')],
+    ['JSON 이 아닌 거절 문장', () => jsonReply('도와드릴 수 없습니다.', 'refusal')],
+    ['스키마에 맞지 않는 JSON', () => jsonReply('{"answer":1}')],
+  ] as const) {
+    it(`parse: ${name}도 사용량을 남기고 llm_failed`, async () => {
+      const { client, calls } = fakeClient(() => ({ ...reply(), usage: USAGE }));
+      const reported: number[] = [];
+      await rejectsLlmFailed(
+        createAnthropicLlm(client).parse({
+          ...parseReq,
+          onUsage: (tokens) => {
+            reported.push(tokens);
+          },
+        }),
+      );
+      assert.deepEqual(reported, [37]);
+      assert.equal(calls.length, 1);
+    });
+  }
 });

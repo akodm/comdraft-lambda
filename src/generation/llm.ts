@@ -151,15 +151,18 @@ export const createAnthropicLlm = (
   client: Anthropic,
   options: LlmOptions,
 ): LlmClient => ({
+  // SDK 의 messages.parse 는 응답을 구조화 출력으로 바꾸다 실패하면 응답 없이 던지므로,
+  // create 로 받아 사용량을 먼저 보고한 뒤 직접 파싱한다
   parse: async ({ system, user, schema, effort, maxTokens, onUsage }) => {
+    const format = zodOutputFormat(schema);
     const message = await callWithDeadline(options, (requestOptions) =>
-      client.messages.parse(
+      client.messages.create(
         {
           model: GENERATION_MODEL,
           max_tokens: maxTokens,
           system,
           messages: [{ role: 'user', content: user }],
-          output_config: { effort, format: zodOutputFormat(schema) },
+          output_config: { effort, format },
         },
         requestOptions,
       ),
@@ -167,10 +170,17 @@ export const createAnthropicLlm = (
 
     await reportUsage(message, onUsage);
     assertCompleted(message.stop_reason);
-    if (message.parsed_output == null) {
+    // SDK 와 같이 첫 text 블록을 결과로 본다 (thinking 블록은 건너뜀)
+    const text = message.content.find((block) => block.type === 'text')?.text;
+    if (text == null) {
       throw fail();
     }
-    return message.parsed_output;
+    // JSON·스키마 오류 원문에는 응답 내용이 섞일 수 있어 사유 코드만 남김
+    try {
+      return format.parse(text);
+    } catch {
+      throw fail();
+    }
   },
 
   write: async ({ system, user, effort, maxTokens, onUsage }) => {
