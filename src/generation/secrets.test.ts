@@ -87,6 +87,27 @@ describe('secrets', () => {
     assert.equal(containsSecret('see https://example.com/a:b'), false);
   });
 
+  it('긴 입력에서도 검사가 선형 시간에 끝난다', () => {
+    for (const text of [
+      'a'.repeat(100_000),
+      'token'.repeat(20_000),
+      'ab+'.repeat(30_000),
+      'password' + 'x'.repeat(100_000),
+      'eyJ'.repeat(30_000),
+    ]) {
+      const started = performance.now();
+      containsSecret(text);
+      redactSecrets(text);
+      assert.ok(performance.now() - started < 500, `${text.slice(0, 8)}… 가 너무 오래 걸림`);
+    }
+  });
+
+  it('반복 길이를 묶어도 긴 실제 비밀값은 계속 잡는다', () => {
+    assert.equal(containsSecret('api_key = "' + 'a'.repeat(300) + '"'), true);
+    assert.equal(containsSecret('postgresql+psycopg://user:pass@db/x'), true);
+    assert.equal(containsSecret('SUPER_LONG_SERVICE_SECRET_KEY_VALUE = "abcdefgh1234"'), true);
+  });
+
   it('SSH 키 파일 이름 (rsa 외 형식)', () => {
     for (const name of ['id_ed25519', 'keys/id_ed25519.pub', 'id_ecdsa', 'id_ecdsa_sk', 'id_dsa', 'ID_RSA']) {
       assert.equal(isSecretFile(name), true, name);

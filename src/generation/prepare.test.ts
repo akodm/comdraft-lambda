@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { CommitDetail } from '../github.ts';
-import { HUNK_TOKEN_BUDGET, MAX_HUNK_LINES, MAX_SELECTED_HUNKS } from './limits.ts';
+import {
+  HUNK_TOKEN_BUDGET,
+  MAX_HUNK_LINE_CHARS,
+  MAX_HUNK_LINES,
+  MAX_SELECTED_HUNKS,
+} from './limits.ts';
 import {
   indexHunks,
   languageForFile,
@@ -94,6 +99,21 @@ describe('prepareCommits', () => {
     assert.equal(c.message.includes('aaaaaa'), false);
     assert.ok(c.message.startsWith('m'.repeat(990) + '[가림]'));
     assert.ok(c.message.length <= 1000);
+  });
+
+  it('아주 긴 커밋 메시지도 앞부분만 검사해 빨리 끝난다', () => {
+    const started = performance.now();
+    const [c] = prepareCommits([commit('a', [], 'x'.repeat(1_000_000))]);
+    assert.ok(performance.now() - started < 500);
+    assert.equal(c.message.length, 1000);
+  });
+
+  it('너무 긴 줄이 있는 hunk(minified 등)는 본문 대신 생략 표시로 둔다', () => {
+    const [c] = prepareCommits([
+      commit('a', [file('x.js', `@@ -1 +1 @@\n-a\n+${'b'.repeat(MAX_HUNK_LINE_CHARS + 1)}`)]),
+    ]);
+    assert.deepEqual(c.files[0].hunks[0].lines, ['[긴 줄 생략]']);
+    assert.equal(c.files[0].hunks[0].redacted, true);
   });
 
   it('메시지는 1000자, 파일은 50개까지', () => {

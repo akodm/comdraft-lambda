@@ -3,9 +3,11 @@ import {
   estimateTokens,
   HUNK_TOKEN_BUDGET,
   MAX_CATALOG_FILES_PER_COMMIT,
+  MAX_HUNK_LINE_CHARS,
   MAX_HUNK_LINES,
   MAX_MESSAGE_CHARS,
   MAX_SELECTED_HUNKS,
+  MESSAGE_REDACT_MARGIN,
 } from './limits.ts';
 import { containsSecret, isSecretFile, redactSecrets } from './secrets.ts';
 
@@ -36,6 +38,8 @@ export interface PreparedCommit {
 }
 
 const REDACTED_LINE = '[가림]';
+// 너무 긴 줄이 있어 본문을 넘기지 않은 hunk (코드·근거로 쓰지 못하게 가림과 같이 다룸)
+const LONG_LINE_MARKER = '[긴 줄 생략]';
 
 const LOCK_FILES = new Set([
   'pnpm-lock.yaml',
@@ -110,11 +114,26 @@ const splitPatch = (patch: string): Array<{ header: string; lines: string[] }> =
 const prepareHunks = (fileId: string, filename: string, patch: string): PreparedHunk[] => {
   const language = languageForFile(filename);
   return splitPatch(patch).map((raw, i) => {
+    const id = `${fileId}.H${i + 1}`;
+    const header = raw.header.slice(0, MAX_HUNK_LINE_CHARS);
+    const headerSecret = containsSecret(header);
     const lines = raw.lines.slice(0, MAX_HUNK_LINES);
-    const redacted = containsSecret(raw.header) || containsSecret(lines.join('\n'));
+
+    // minified·생성 데이터처럼 긴 줄은 글로 설명할 코드가 아니고, 검사 비용만 큼
+    if (lines.some((line) => line.length > MAX_HUNK_LINE_CHARS)) {
+      return {
+        id,
+        header: headerSecret ? REDACTED_LINE : header,
+        lines: [LONG_LINE_MARKER],
+        redacted: true,
+        language,
+      };
+    }
+
+    const redacted = headerSecret || containsSecret(lines.join('\n'));
     return {
-      id: `${fileId}.H${i + 1}`,
-      header: containsSecret(raw.header) ? REDACTED_LINE : raw.header,
+      id,
+      header: headerSecret ? REDACTED_LINE : header,
       lines: redacted ? [REDACTED_LINE] : lines,
       redacted,
       language,
@@ -149,8 +168,11 @@ export const prepareCommits = (commits: CommitDetail[]): PreparedCommit[] =>
       id,
       sha: commit.sha,
       htmlUrl: commit.htmlUrl,
-      // 자르기 전에 가려야 경계에 걸친 비밀값의 앞부분이 남지 않는다
-      message: redactSecrets(commit.message).slice(0, MAX_MESSAGE_CHARS),
+      // 여유를 두고 먼저 자른 뒤 가리고 다시 자름: 경계에 걸친 비밀값의 앞부분이 남지 않고,
+      // 아주 긴 메시지도 검사할 길이가 일정함
+      message: redactSecrets(
+        commit.message.slice(0, MAX_MESSAGE_CHARS + MESSAGE_REDACT_MARGIN),
+      ).slice(0, MAX_MESSAGE_CHARS),
       files: commit.files
         .slice(0, MAX_CATALOG_FILES_PER_COMMIT)
         .map((file, fileIndex) => prepareFile(id, fileIndex, file)),

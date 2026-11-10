@@ -8,6 +8,10 @@ export const MAX_CATALOG_FILES_PER_COMMIT = 50;
 export const MAX_SELECTED_HUNKS = 30;
 // hunk 하나에서 보여 주는 최대 줄 수
 export const MAX_HUNK_LINES = 150;
+// 이보다 긴 줄이 있는 hunk(minified, 생성된 데이터 등)는 본문을 넘기지 않음
+export const MAX_HUNK_LINE_CHARS = 1_000;
+// 비밀값 가림 전에 커밋 메시지를 자를 때 남기는 여유 (경계에 걸친 토큰도 잡기 위해)
+export const MESSAGE_REDACT_MARGIN = 512;
 // 분석 단계에 보내는 hunk 합계 토큰 상한
 export const HUNK_TOKEN_BUDGET = 40_000;
 // 초안에 삽입하는 코드 블록 최대 줄 수
