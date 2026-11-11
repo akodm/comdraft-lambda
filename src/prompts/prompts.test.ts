@@ -188,6 +188,45 @@ describe('getPromptPack', () => {
     assert.ok(en.write.system.includes('## Flow'));
   });
 
+  it('도입·마무리는 근거가 없을 때 지어내지 않는 대안을 준다', () => {
+    const ko = getPromptPack('ko').write.system;
+    // 마무리: 회고할 근거가 없으면 느낀 점 대신 바뀐 점이나 남은 일로 맺는다
+    assert.ok(ko.includes('회고할 사실이나 lesson 빈칸이 없으면 느낀 점을 지어내지 말고'));
+    assert.ok(ko.includes('바뀐 점이나 남은 일'));
+    // 도입: 글 유형 흐름의 첫 단계, 계기 사실이 없으면 첫 사실부터
+    assert.ok(ko.includes('흐름의 첫 단계'));
+    assert.ok(ko.includes('첫 사실에서 바로 시작'));
+    assert.ok(!ko.includes('무엇이 문제였는지'));
+    const en = getPromptPack('en').write.system;
+    assert.ok(en.includes('If there is no fact or lesson blank to reflect on, do not make up how you felt'));
+    assert.ok(en.includes('what changed or what is left to do'));
+    assert.ok(en.includes('first step of the post type'));
+    assert.ok(en.includes('start directly from the first fact'));
+    assert.ok(!en.includes('what went wrong'));
+  });
+
+  it('분석은 빈칸을 절마다가 아니라 글 전체에서 몇 개만 고르고, 넘쳐도 된다는 신호를 주지 않는다', () => {
+    const ko = getPromptPack('ko').analyze.system;
+    assert.ok(!ko.includes('절마다 입력에서 확인되는 사실, 보여 줄 코드의 위치, 글쓴이에게 물어야 할 빈칸'));
+    assert.ok(ko.includes('빈칸은 글 전체에서'));
+    assert.ok(!ko.includes('앞에서부터 상한까지만'));
+    assert.ok(ko.includes('상한 안이어야 한다'));
+    const en = getPromptPack('en').analyze.system;
+    assert.ok(!en.includes('For each section of the planned outline, you pick the facts the inputs confirm, the location of code to show, and the blanks'));
+    assert.ok(en.includes('Across the whole post'));
+    assert.ok(!en.includes('keeps only the first ones'));
+    assert.ok(en.includes('must stay within the limit'));
+  });
+
+  it('필수 제목 수준의 하위 절은 근거 많은 절 아래에 두고, 재료 없는 절이 맡았으면 제목을 남긴다', () => {
+    const ko = getPromptPack('ko');
+    assert.ok(ko.plan.system.includes('필수 수준의 하위 절은 근거가 가장 많은 절 아래에 둔다'));
+    assert.ok(ko.write.system.includes('제목은 남기고 이웃 절의 재료를 그 아래로 옮긴다'));
+    const en = getPromptPack('en');
+    assert.ok(en.plan.system.includes('under the section with the most evidence'));
+    assert.ok(en.write.system.includes("keep the heading and move a neighboring section's material under it"));
+  });
+
   it('빈칸 상한이 system 옵션표와 사용자 입력 옵션 줄에 들어간다', () => {
     const ko = getPromptPack('ko');
     const en = getPromptPack('en');

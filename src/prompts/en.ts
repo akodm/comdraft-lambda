@@ -23,7 +23,7 @@ const NONE = '(none)';
 
 const tone: PromptPack['tone'] = {
   plain: 'Concise and neutral. State things directly, without embellishment.',
-  friendly: 'Conversational. Talk to the reader using "you" and "we".',
+  friendly: 'Conversational. Talk to the reader as "you"; the author stays "I".',
   professional: 'Formal and technical. Use precise terminology, with no exclamations or emoji.',
 };
 
@@ -160,7 +160,7 @@ ${ID_RULE}
 ## Planning rules
 - The request sets the post's focus and outline. If it is empty or vague, take the most central piece of work in the commit messages and changes as the topic.
 - Keep the number of sections within the range for the length option. The post type's flow is the order in which the story leads the reader. Do not turn each step of the flow into a section to fill in; divide the sections so the story of this work follows that flow. If the flow has more steps than sections, merge neighboring steps into one section; if it has fewer, split the steps with more story.
-- If the required blocks include h3–h6, actually include sections at those levels. Place deeper headings as subsections under a higher-level section; a subsection is still one item in sections and counts toward the section count. The section range takes priority over heading depth, so if not everything fits, stay within the range and go only as deep as fits.
+- If the required blocks include h3–h6, actually include sections at those levels. Place deeper headings as subsections under a higher-level section; a subsection is still one item in sections and counts toward the section count. The section range takes priority over heading depth, so if not everything fits, stay within the range and go only as deep as fits. Place subsections at a required level under the section with the most evidence; under a section without evidence they are likely to be dropped at the writing stage.
 - Even for a step in the flow, if the inputs have no evidence for it (e.g. result numbers, lessons), do not give it its own section; merge it into a neighboring section. A section without evidence ends up as nothing but blanks the author has to write. Do not state facts that are not in the inputs in a heading or purpose.
 - Choose only hunks of [included] files whose ids are shown in the catalog, or ids H1–HN of a \`(+N hunks)\` file. The next stage receives at most 30 hunks, taken from earlier sections first and, within a section, in listed order, so put the key hunks first. Prefer code that shows the topic over tests, configuration, and minor fixes.
 - Do not choose the same hunk for more than one section.
@@ -168,7 +168,7 @@ ${ID_RULE}
 
 ${OPTION_TABLE}`;
 
-const ANALYZE_SYSTEM = `You prepare the material for a technical blog post draft for developers. The draft is built in three stages, and this analysis is the second. For each section of the planned outline, you pick the facts the inputs confirm, the location of code to show, and the blanks the author needs to fill in. The last stage may only put into the post the facts you list. A wrong fact here becomes an error in the post, and presenting something without evidence as fact misleads the reader. When you are not sure, do not state it as a fact; leave it out. Blanks go only in the few places the blank rules allow.
+const ANALYZE_SYSTEM = `You prepare the material for a technical blog post draft for developers. The draft is built in three stages, and this analysis is the second. For each section of the planned outline, you pick the facts the inputs confirm and the location of code to show. Across the whole post, you pick only the few blanks the author must be asked. The last stage may only put into the post the facts you list. A wrong fact here becomes an error in the post, and presenting something without evidence as fact misleads the reader. When you are not sure, do not state it as a fact; leave it out. Blanks go only in the few places the blank rules allow.
 
 ${DATA_RULE}
 
@@ -204,7 +204,7 @@ ${ID_RULE}
 ## Blank rules
 - unknowns: parts the post really needs but the inputs (request, commits, code, links) cannot tell. The author fills them in with a short answer. Ids run U1, U2 … in order.
 - Add a blank only for something the inputs cannot tell and the post does not hold together without (e.g. why you chose this approach over others, numbers you actually measured). Do not put a blank in every section just because evidence is thin. If the story can continue within the evidence, do not add a blank; leave out what you cannot state for certain.
-- The number of blanks in the whole post must not exceed the limit for the length option ("at most N blanks" in the options). List the most important blank first. If there are more, the system keeps only the first ones up to the limit.
+- The number of blanks in the whole post must stay within the limit for the length option ("at most N blanks" in the options). List the most important blank first.
 - kind
   - motivation: why the work started, the problem at hand
   - result: results, numbers, effects
@@ -239,10 +239,10 @@ ${VOICE_RULE}
 
 ## Flow
 - The post follows the post type's flow as one story from start to finish. Do not write it like a dev log that alternates problem and solution section by section.
-- Opening: the first paragraph draws the reader into the situation of the work, describing within the facts what the situation was and what went wrong. Do not open by stating sources or with a table-of-contents line such as "In this post, I will cover …".
+- Opening: the first paragraph draws the reader into the situation of the work, describing within the facts the situation that fits the first step of the post type's flow (e.g. background and what started it for experience, why it matters for lecture). If no fact shows the motivation, do not make up a situation; start directly from the first fact. Do not open by stating sources or with a table-of-contents line such as "In this post, I will cover …".
 - Transitions: the first sentence of each section follows from the previous one, so that what was learned in one section leads to the next concern or choice. Use the connection noted in purpose as a guide.
-- Closing: end the last section with a short reflection by the author looking back on the work, not a list summarizing the facts. Keep the reflection within what the facts confirm or what a blank leaves to the author, and do not make up lessons that are not in the inputs.
-- Do not write a separate section for one that has no facts, code, or blanks, so that no section is filled with unsupported content.
+- Closing: end the last section with a short reflection by the author looking back on the work, not a list summarizing the facts. Keep the reflection within what the facts confirm or what a blank leaves to the author, and do not make up lessons that are not in the inputs. If there is no fact or lesson blank to reflect on, do not make up how you felt; close in one or two sentences, within the facts, on what changed or what is left to do.
+- Do not write a separate section for one that has no facts, code, or blanks, so that no section is filled with unsupported content. But if such a section holds a heading level from the required blocks or has subsections, keep the heading and move a neighboring section's material under it.
 
 ## Placeholders
 Do not write code, links, or blanks directly; insert them only with the three placeholders below. The system replaces them with the originals, which keeps code and addresses exact.
