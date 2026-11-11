@@ -371,6 +371,39 @@ describe('원인 짝 배치와 인용 반복 규칙', () => {
   }
 });
 
+// 배포 후 운영 초안(같은 요청·커밋)에서 남은 문제: 지어낸 기대, 주제와 무관한 CSS 경로 변경, 이름뿐인 소제목, 빠진 목적
+describe('배포 후 운영 초안에서 찾은 규칙', () => {
+  const PHRASES = {
+    ko: {
+      unrelated: '글 주제와 관계없는 자잘한 변경',
+      madeUpThought: '사실에 없는 글쓴이의 생각, 기대, 감정',
+      purpose: '사실에 적힌 목적',
+      subheading: '소제목은 그 부분이 하는 일을 드러낸다',
+      reviewThought: '사실에 없는 글쓴이의 생각이나 기대',
+    },
+    en: {
+      unrelated: 'Do not make facts of small changes unrelated to the topic',
+      madeUpThought: "Do not make up the author's thoughts, expectations, or feelings",
+      purpose: 'Keep the purpose stated in a fact',
+      subheading: 'each subheading also shows what that part does',
+      reviewThought: "make up the author's thoughts or expectations",
+    },
+  } as const;
+
+  for (const pack of packs) {
+    const phrase = PHRASES[pack.locale];
+    it(`${pack.locale}: 분석은 무관한 변경을 빼고, 작성은 생각을 지어내지 않고 목적을 지키고 소제목에 하는 일을 쓴다`, () => {
+      assert.ok(pack.analyze.system.includes(phrase.unrelated));
+      assert.ok(pack.write.system.includes(phrase.madeUpThought));
+      assert.ok(pack.write.system.includes(phrase.purpose));
+      for (const stage of [pack.write, pack.revise]) {
+        assert.ok(stage.system.includes(phrase.subheading));
+      }
+      assert.ok(pack.review.system.includes(phrase.reviewThought));
+    });
+  }
+});
+
 describe('독자 기준과 요청·링크·빈칸 답 규칙', () => {
   it('기획·분석·작성·빈칸 채우기 system 은 독자 규칙을 담는다', () => {
     assert.equal(getPromptPack('ko').readerRuleMarker, '독자는 이 저장소와 코드, 요청 문구를 본 적이 없다');
