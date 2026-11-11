@@ -291,6 +291,29 @@ describe('validateAnalysis', () => {
     assert.deepEqual(out.code.map((c) => c.id), ['S1', 'S4', 'S5']);
   });
 
+  it('요청의 소감을 다시 묻는 결과·회고 빈칸은 버리고, 회고 빈칸은 마지막 절로 옮긴다', () => {
+    // 실제 비교 실행: "extract 로 ... 사용이 편하고 좋았어" 라는 요청이 있는데 "extract 로 얼마나 줄었는지" 를 또 물었다
+    const p3 = plan([section(2), section(2), section(2)]);
+    const out = validateAnalysis(
+      {
+        facts: [
+          { id: 'K1', section: 1, text: 'extract 명령으로 번역 파일 생성과 키 관리까지 맡겨 사용이 편하고 좋았다.', evidence: ['R'] },
+          { id: 'K2', section: 0, text: 'sharp 를 처음 써 봤는데 설정이 생각보다 간단했다.', evidence: ['R'] },
+        ],
+        code: [],
+        unknowns: [
+          { id: 'U1', section: 1, kind: 'result', ask: 'extract 명령으로 키를 관리해 보니 얼마나 줄었나요?' },
+          // 소감과 겹치지 않는 결과 질문은 남긴다
+          { id: 'U2', section: 0, kind: 'result', ask: '변환 전후 썸네일 용량이 얼마나 줄었나요?' },
+          // 회고 빈칸은 마지막 절에 둔다
+          { id: 'U3', section: 0, kind: 'lesson', ask: '가장 어려웠던 부분은 무엇이었나요?' },
+        ],
+      },
+      { ...ctxFor(p3), commitIds: new Set(['C1']) },
+    );
+    assert.deepEqual(out.unknowns.map((u) => [u.id, u.section]), [['U2', 0], ['U3', 2]]);
+  });
+
   it('빈 ask 는 kind 기본 문구, hint 특수 문자를 정리한다', () => {
     assert.equal(sanitizeHint('왜 "이걸"\n{했나} ::: 요'), '왜 이걸 했나 요');
     assert.equal(sanitizeHint('가'.repeat(100)).length, 80);

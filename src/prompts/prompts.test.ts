@@ -498,8 +498,8 @@ describe('옵션 조합 비교 2바퀴에서 찾은 규칙', () => {
 
 describe('검토 패턴', () => {
   const SAMPLES = {
-    ko: ['정리하면 끝이다.', '자세한 이유는 뒤에서 다시 이야기할게요.', '캐시에 둔다고 해요.', '문서를 따른 것으로 보인다.'],
-    en: ['To sum up, it works.', "We'll come back to this.", 'They say it caches.', 'It appears to follow the docs.'],
+    ko: ['정리하면 끝이다.', '이번 작업은 설정과 경로, 로더로 나뉘었어요.', '자세한 이유는 뒤에서 다시 이야기할게요.', '캐시에 둔다고 해요.', '문서를 따른 것으로 보인다.'],
+    en: ['To sum up, it works.', 'This work splits into three parts.', "We'll come back to this.", 'They say it caches.', 'It appears to follow the docs.'],
   } as const;
   for (const pack of packs) {
     it(`${pack.locale}: 메타 문장·전언·추측을 잡고 보통 문장은 잡지 않는다`, () => {

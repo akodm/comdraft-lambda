@@ -614,7 +614,7 @@ Turn the answer above into 1 to 3 paragraphs for the \`${FILL_TARGET_MARKER}\` p
   reviewPatterns: [
     {
       kind: 'voice',
-      pattern: /\b(to sum up|in this post|the next blank|the blank below|we'll come back|more on this later|let's (follow|look))\b/i,
+      pattern: /\b(to sum up|this work (splits|is split|breaks down) into|in this post|the next blank|the blank below|we'll come back|more on this later|let's (follow|look))\b/i,
       fix: 'This sentence points at another part of the post or a blank, or announces a summary or outline; remove it and connect the surrounding facts directly.',
     },
     {

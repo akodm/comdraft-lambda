@@ -200,6 +200,26 @@ const dropOverlappingPicks = (picks: CodePick[]): CodePick[] => {
   return kept;
 };
 
+// 요청에 적힌 소감·평가 (예: 편했다, 간단했다, easy to use) — 이미 글쓴이가 답한 내용이라 같은 것을 빈칸으로 다시 묻지 않는다
+const IMPRESSION = /편하|편했|좋았|간단|만족|불편|아쉬|어려웠|쉬웠|\b(easy|convenient|liked|enjoyed|hard|difficult|painful)\b/i;
+const PARTICLE = /(으로|에서|까지|부터|로|을|를|이|가|은|는|과|와|의|에|도|만)$/;
+const contentWords = (text: string): Set<string> =>
+  new Set(
+    text
+      .toLowerCase()
+      .split(/[^\p{L}\p{N}]+/u)
+      .map((word) => word.replace(PARTICLE, ''))
+      .filter((word) => word.length >= 2),
+  );
+
+// 결과·회고 빈칸이 요청의 소감과 같은 대상을 묻는지 (내용어 두 개 이상이 겹치면 같은 질문으로 본다)
+const reasksImpression = (unknown: RawAnalysis['unknowns'][number], impressions: RawAnalysis['facts']): boolean => {
+  const kind = toBlankKind(unknown.kind);
+  if (kind !== 'result' && kind !== 'lesson') return false;
+  const asked = contentWords(unknown.ask);
+  return impressions.some((fact) => [...contentWords(fact.text)].filter((word) => asked.has(word)).length >= 2);
+};
+
 // 길이별 코드 조각 상한 (짧은 글에 코드가 본문보다 많아지지 않게, 앞에서부터 남긴다)
 const keepCodeLimit = (picks: CodePick[], length: string): CodePick[] =>
   picks.slice(0, CODE_LIMIT[length as keyof typeof CODE_LIMIT] ?? CODE_LIMIT.medium);
@@ -248,13 +268,17 @@ export const validateAnalysis = (
     ctx.length,
   ).map((pick) => ({ ...pick, mode: toCodeMode(pick.mode) }));
 
+  const impressions = facts.filter((fact) => fact.evidence.includes('R') && IMPRESSION.test(fact.text));
   const unknowns = analysis.unknowns
     .filter((unknown) => inRange(unknown.section))
+    .filter((unknown) => !reasksImpression(unknown, impressions))
     .slice(0, blankLimit(ctx.length))
     .map((unknown) => {
       const kind = toBlankKind(unknown.kind);
       return {
         ...unknown,
+        // 회고 빈칸은 글을 맺는 마지막 절에 둔다 (본문 중간에 회고 질문이 끼지 않게)
+        section: kind === 'lesson' ? sectionCount - 1 : unknown.section,
         kind,
         ask: sanitizeHint(unknown.ask) || ctx.blankDefaults[kind],
       };
