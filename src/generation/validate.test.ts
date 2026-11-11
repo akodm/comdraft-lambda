@@ -161,6 +161,36 @@ describe('validateAnalysis', () => {
     assert.deepEqual(out.code.map((c) => c.id), ['S1', 'S7']);
   });
 
+  it('같은 hunk 에서 앞 조각과 줄이 겹치는 조각은 버린다 (표시 방식이 달라도)', () => {
+    const pick = (id: string, from: string, s: number, e: number, mode: 'after' | 'diff' = 'after') => ({
+      id,
+      section: 0,
+      from,
+      startLine: s,
+      endLine: e,
+      mode,
+      point: 'p',
+    });
+    const out = validateAnalysis(
+      {
+        ...empty,
+        code: [
+          pick('S1', 'C1.F1.H1', 1, 10),
+          // S1 안에 들어가는 부분 (실제 비교 실행에서 같은 useEffect 가 두 번 실림)
+          pick('S2', 'C1.F1.H1', 4, 8),
+          // 끝줄 하나만 겹쳐도 버린다
+          pick('S3', 'C1.F1.H1', 10, 14, 'diff'),
+          // 바로 다음 줄부터는 겹치지 않는다
+          pick('S4', 'C1.F1.H1', 11, 14),
+          // 다른 hunk 는 줄 번호가 같아도 겹치지 않는다
+          pick('S5', 'C1.F1.H2', 1, 10),
+        ],
+      },
+      ctxFor(p, [hunk('C1.F1.H1', 20), hunk('C1.F1.H2', 20)]),
+    );
+    assert.deepEqual(out.code.map((c) => c.id), ['S1', 'S4', 'S5']);
+  });
+
   it('빈 ask 는 kind 기본 문구, hint 특수 문자를 정리한다', () => {
     assert.equal(sanitizeHint('왜 "이걸"\n{했나} ::: 요'), '왜 이걸 했나 요');
     assert.equal(sanitizeHint('가'.repeat(100)).length, 80);
@@ -309,7 +339,8 @@ describe('validateAnalysis 구조화 출력 값 보정', () => {
         facts: [],
         code: [
           { ...pick, id: 'K1', mode: 'before' },
-          { ...pick, id: 'K2', mode: 'diff' },
+          // 겹치는 조각은 버려지므로 다른 줄을 고른다
+          { ...pick, id: 'K2', mode: 'diff', startLine: 3, endLine: 4 },
         ],
         unknowns: [{ id: 'U1', section: 0, kind: 'detail', ask: 'q' }],
       },

@@ -123,13 +123,30 @@ const isValidCodePick = (
   return pick.endLine - pick.startLine + 1 <= MAX_CODE_LINES;
 };
 
+type CodePick = RawAnalysis['code'][number];
+
+// 같은 hunk 에서 앞 조각과 줄 범위가 겹치는 조각을 버린다 (같은 코드가 글에 두 번 실리지 않게, 표시 방식과 무관)
+const dropOverlappingPicks = (picks: CodePick[]): CodePick[] => {
+  const kept: CodePick[] = [];
+  for (const pick of picks) {
+    const overlaps = kept.some(
+      (other) =>
+        other.from === pick.from &&
+        pick.startLine <= other.endLine &&
+        other.startLine <= pick.endLine,
+    );
+    if (!overlaps) kept.push(pick);
+  }
+  return kept;
+};
+
 const maxUnknownNumber = (unknowns: RawAnalysis['unknowns']): number =>
   unknowns.reduce((max, u) => {
     const match = /^U(\d+)$/.exec(u.id);
     return match ? Math.max(max, Number(match[1])) : max;
   }, 0);
 
-// 근거 없는 사실, 잘못된 코드 위치를 버리고 빈칸 문구를 정리한다.
+// 근거 없는 사실, 잘못된 코드 위치, 앞 조각과 겹치는 코드 위치를 버리고 빈칸 문구를 정리한다.
 // 목록 밖의 코드 표시 방식은 after, 빈칸 종류는 detail 로 바꾼다.
 // 빈칸은 길이별 상한(BLANK_LIMIT)까지만 앞에서부터 남긴다. 재료가 없는 절은 작성 단계가 이웃 절과 합치므로 빈칸을 더하지 않는다.
 // 다만 글 전체에 사실·코드·빈칸이 하나도 없으면 본문을 쓸 수 없으므로 첫 절에 detail 빈칸 하나를 둔다.
@@ -158,9 +175,9 @@ export const validateAnalysis = (
     }))
     .filter((fact) => fact.evidence.length > 0);
 
-  const code = analysis.code
-    .filter((pick) => inRange(pick.section) && isValidCodePick(pick, ctx.hunks))
-    .map((pick) => ({ ...pick, mode: toCodeMode(pick.mode) }));
+  const code = dropOverlappingPicks(
+    analysis.code.filter((pick) => inRange(pick.section) && isValidCodePick(pick, ctx.hunks)),
+  ).map((pick) => ({ ...pick, mode: toCodeMode(pick.mode) }));
 
   const unknowns = analysis.unknowns
     .filter((unknown) => inRange(unknown.section))
