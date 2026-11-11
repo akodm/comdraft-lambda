@@ -404,6 +404,43 @@ describe('배포 후 운영 초안에서 찾은 규칙', () => {
   }
 });
 
+// 배포 후 운영 초안 두 번째: 도입의 원인을 미들웨어에 이음, "~한다고 해요" 전언, 섞여 들어온 CSS 경로, 소감 뒤 수치를 묻는 빈칸
+describe('배포 후 운영 초안 두 번째에서 찾은 규칙', () => {
+  const PHRASES = {
+    ko: {
+      introPair: '요청이 짝지은 원인을 도입에서 소개할 때는 요청이 든 해결까지 함께 말한다',
+      pastExperience: '사실에 없는 과거 경험',
+      hearsay: '전해 들은 말로 쓰지 않고',
+      mixedHunk: '중요한 hunk 안에 함께 섞여 있어도',
+      impressionNumbers: '시간이 얼마나 줄었는지 같은 효과나 수치도 묻지 않는다',
+      reviewHearsay: '문서 내용을 전해 들은 말로 쓴 문장',
+      reviewUnrelated: '글 주제와 무관한 자잘한 변경',
+    },
+    en: {
+      introPair: 'When the opening introduces a cause the request pairs with a fix',
+      pastExperience: 'Do not add past experience that is not in the facts',
+      hearsay: 'Do not write document content as hearsay',
+      mixedHunk: 'even when it is mixed into an important hunk about the topic',
+      impressionNumbers: 'or for effects or numbers such as how much time it saved',
+      reviewHearsay: 'document content written as hearsay',
+      reviewUnrelated: 'sentences about small changes unrelated to the topic',
+    },
+  } as const;
+
+  for (const pack of packs) {
+    const phrase = PHRASES[pack.locale];
+    it(`${pack.locale}: 작성은 도입 원인에 해결을 함께 쓰고, 분석은 전언·섞인 무관 변경·소감 수치 질문을 막고, 검토가 짚는다`, () => {
+      assert.ok(pack.write.system.includes(phrase.introPair));
+      assert.ok(pack.write.system.includes(phrase.pastExperience));
+      for (const key of ['hearsay', 'mixedHunk', 'impressionNumbers'] as const) {
+        assert.ok(pack.analyze.system.includes(phrase[key]), key);
+      }
+      assert.ok(pack.review.system.includes(phrase.reviewHearsay));
+      assert.ok(pack.review.system.includes(phrase.reviewUnrelated));
+    });
+  }
+});
+
 describe('독자 기준과 요청·링크·빈칸 답 규칙', () => {
   it('기획·분석·작성·빈칸 채우기 system 은 독자 규칙을 담는다', () => {
     assert.equal(getPromptPack('ko').readerRuleMarker, '독자는 이 저장소와 코드, 요청 문구를 본 적이 없다');
