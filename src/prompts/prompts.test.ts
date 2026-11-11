@@ -481,8 +481,8 @@ describe('옵션 조합 비교 1바퀴에서 찾은 규칙', () => {
 // 옵션 조합 비교 2바퀴: 필수 h4 를 맞추려고 모든 절을 #### 로 씀, "그 이유는" 뒤에 빈칸
 describe('옵션 조합 비교 2바퀴에서 찾은 규칙', () => {
   const PHRASES = {
-    ko: { allHeadings: '모든 절 제목을 그 수준(예: ####)으로 바꾸지 않는다', unfinished: '"그 이유는" 처럼 끝맺지 않은 문장 뒤에 빈칸을 두지 않는다' },
-    en: { allHeadings: 'Do not change every section heading to a required level', unfinished: 'Do not leave an unfinished sentence such as "The reason is" right before a blank' },
+    ko: { allHeadings: '모든 절 제목을 그 수준(예: ####)으로 바꾸지 않는다', unfinished: '"그 이유는" 처럼 끝맺지 않은 문장 뒤에 빈칸을 두지 않는다', summary: '"정리하면 ~", "이번 작업은 ~로 나뉜다" 같은 요약 문장으로 맺지 않는다' },
+    en: { allHeadings: 'Do not change every section heading to a required level', unfinished: 'Do not leave an unfinished sentence such as "The reason is" right before a blank', summary: 'Do not end with a summary sentence such as "To sum up, …"' },
   } as const;
   for (const pack of packs) {
     const phrase = PHRASES[pack.locale];
@@ -491,6 +491,7 @@ describe('옵션 조합 비교 2바퀴에서 찾은 규칙', () => {
         assert.ok(stage.system.includes(phrase.allHeadings));
         assert.ok(stage.system.includes(phrase.unfinished));
       }
+      assert.ok(pack.write.system.includes(phrase.summary));
     });
   }
 });
