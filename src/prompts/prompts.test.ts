@@ -478,6 +478,23 @@ describe('옵션 조합 비교 1바퀴에서 찾은 규칙', () => {
   }
 });
 
+// 옵션 조합 비교 2바퀴: 필수 h4 를 맞추려고 모든 절을 #### 로 씀, "그 이유는" 뒤에 빈칸
+describe('옵션 조합 비교 2바퀴에서 찾은 규칙', () => {
+  const PHRASES = {
+    ko: { allHeadings: '모든 절 제목을 그 수준(예: ####)으로 바꾸지 않는다', unfinished: '"그 이유는" 처럼 끝맺지 않은 문장 뒤에 빈칸을 두지 않는다' },
+    en: { allHeadings: 'Do not change every section heading to a required level', unfinished: 'Do not leave an unfinished sentence such as "The reason is" right before a blank' },
+  } as const;
+  for (const pack of packs) {
+    const phrase = PHRASES[pack.locale];
+    it(`${pack.locale}: 작성과 고쳐 쓰기는 절 제목 수준을 지키고 끝맺지 않은 문장 뒤에 빈칸을 두지 않는다`, () => {
+      for (const stage of [pack.write, pack.revise]) {
+        assert.ok(stage.system.includes(phrase.allHeadings));
+        assert.ok(stage.system.includes(phrase.unfinished));
+      }
+    });
+  }
+});
+
 describe('독자 기준과 요청·링크·빈칸 답 규칙', () => {
   it('기획·분석·작성·빈칸 채우기 system 은 독자 규칙을 담는다', () => {
     assert.equal(getPromptPack('ko').readerRuleMarker, '독자는 이 저장소와 코드, 요청 문구를 본 적이 없다');

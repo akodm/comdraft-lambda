@@ -404,7 +404,21 @@ const normalizeHeadings = (text: string): string => {
   const body = lines.slice(first + 1);
   if (!body.some((line) => line.trim() !== '')) return fail();
   const lowered = body.map((line) => line.replace(/^( {0,3})#(?=[ \t])/, '$1##'));
-  return [...lines.slice(0, first + 1), ...lowered].join('\n');
+  return [...lines.slice(0, first + 1), ...liftHeadings(lowered)].join('\n');
+};
+
+// 본문 제목이 모두 h2 보다 깊으면(예: 모든 절을 ####) 가장 얕은 제목이 h2 가 되도록 모두 같은 만큼 올린다
+const HEADING_LINE = /^( {0,3})(#{2,6})(?=[ \t]+\S)/;
+const liftHeadings = (lines: string[]): string[] => {
+  const levels = lines.flatMap((line) => {
+    const match = HEADING_LINE.exec(line);
+    return match ? [match[2].length] : [];
+  });
+  const shift = levels.length ? Math.min(...levels) - 2 : 0;
+  if (shift <= 0) return lines;
+  return lines.map((line) =>
+    line.replace(HEADING_LINE, (_whole, indent: string, marks: string) => `${indent}${'#'.repeat(marks.length - shift)}`),
+  );
 };
 
 const renderReferences = (links: PreparedLink[], cited: Set<string>, heading: string): string => {

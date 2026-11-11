@@ -157,6 +157,23 @@ const visibleLines = (hunk: PreparedHunk, pick: CodePick, endLine: number): stri
   return toCodeMode(pick.mode) === 'diff' ? lines : lines.filter((line) => !line.startsWith('-'));
 };
 
+// 앞 블록의 닫는 줄(`);`, `}` 등)로 시작하는 조각은 그 줄들을 건너뛴다
+// 여는 괄호가 나오기 전까지만 본다 (조각 끝에서 바깥 블록을 닫는 줄 때문에 본문을 버리지 않게)
+const skipLeadingClosers = (pick: CodePick, hunks: Map<string, PreparedHunk>): CodePick => {
+  const hunk = hunks.get(pick.from) as PreparedHunk;
+  let balance = 0;
+  let startLine = pick.startLine;
+  for (let line = pick.startLine; line <= pick.endLine; line += 1) {
+    balance += bracketBalance([hunk.lines[line - 1]]);
+    if (balance > 0) break;
+    if (balance < 0) {
+      startLine = line + 1;
+      balance = 0;
+    }
+  }
+  return startLine <= pick.endLine ? { ...pick, startLine } : pick;
+};
+
 // 블록 중간에서 끝나는 조각은 괄호가 닫힐 때까지 끝줄을 늘린다 (hunk 끝과 MAX_CODE_LINES 안에서만, 못 닫으면 그대로)
 const closeOpenBlock = (pick: CodePick, hunks: Map<string, PreparedHunk>): CodePick => {
   const hunk = hunks.get(pick.from) as PreparedHunk;
@@ -226,7 +243,7 @@ export const validateAnalysis = (
     dropOverlappingPicks(
       analysis.code
         .filter((pick) => inRange(pick.section) && isValidCodePick(pick, ctx.hunks))
-        .map((pick) => closeOpenBlock(pick, ctx.hunks)),
+        .map((pick) => closeOpenBlock(skipLeadingClosers(pick, ctx.hunks), ctx.hunks)),
     ),
     ctx.length,
   ).map((pick) => ({ ...pick, mode: toCodeMode(pick.mode) }));

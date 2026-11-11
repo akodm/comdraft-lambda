@@ -245,6 +245,22 @@ describe('validateAnalysis', () => {
     );
   });
 
+  it('닫는 괄호로 시작하는 코드 조각은 앞쪽의 짝 없는 닫는 줄을 건너뛴다', () => {
+    // 실제 비교 실행: 코드 조각이 앞 함수의 끝 `[addLink, selectedFolder], );` 에서 시작했다
+    const code: PreparedHunk = {
+      id: 'C1.F1.H1',
+      header: '@@',
+      lines: ['+    [addLink],', '+  );', '+', '+  const onRun = () => {', '+    go();', '+  };'],
+      redacted: false,
+      language: 'ts',
+    };
+    const out = validateAnalysis(
+      { ...empty, code: [{ id: 'S1', section: 0, from: 'C1.F1.H1', startLine: 1, endLine: 6, mode: 'after', point: 'p' }] },
+      ctxFor(p, [code]),
+    );
+    assert.deepEqual(out.code.map((c) => [c.startLine, c.endLine]), [[3, 6]]);
+  });
+
   it('같은 hunk 에서 앞 조각과 줄이 겹치는 조각은 버린다 (표시 방식이 달라도)', () => {
     const pick = (id: string, from: string, s: number, e: number, mode: 'after' | 'diff' = 'after') => ({
       id,

@@ -309,12 +309,13 @@ Do not write code, links, or blanks directly; insert them only with the three pl
   - If you drew on an article or discussion link, say what you drew on where that content comes up. A link left only in the references gives the reader no reason to read it.
   - Keep what the document says brief, only as much as this work needs.
 - \`{{ask:U1}}\`: a blank for the author, on its own line. Place every U from the inputs once in its section, and do not create new blanks.
-  - The sentences right before and after a blank do not introduce or announce the blank or its question; end with the section's facts instead (do not write sentences such as "I'll explain why below" or "let me go over this once more"). Once the author fills the blank, that spot becomes body text, so an announcing sentence stays behind and reads oddly.
+  - The sentences right before and after a blank do not introduce or announce the blank or its question; end with the section's facts instead (do not write sentences such as "I'll explain why below" or "let me go over this once more"). Do not leave an unfinished sentence such as "The reason is" right before a blank; the sentence before a blank is complete on its own. Once the author fills the blank, that spot becomes body text, so an announcing sentence stays behind and reads oddly.
 - Use only ids from the inputs, written exactly in the forms above with no spaces. Do not write any other \`{{…}}\`. Do not put commits in the text.`;
 
 const MARKDOWN_RULE = `## Markdown rules
 - The first line is a single \`# title\`, using the outline's title. Do not use a single-\`#\` heading anywhere else.
 - Write sections in outline order (skipping sections with no material, per the flow rules), with as many \`#\` as the section's level (level 2 → \`##\`). Polish the heading only as far as its meaning stays the same.
+- Do not change every section heading to a required level (e.g. ####) to meet it. Write section headings at their outline level, and put the required level in as subheadings inside a section.
 - When you split a section into subheadings, for example for a required heading level, each subheading also shows what that part does. Do not use only a component or function name (e.g. "### Passing translations to the client" instead of "### LinguiClientProvider"). A heading that is only a name does not tell readers what they are about to read.
 - Allowed: paragraphs, lists (\`-\`, \`1.\`, up to two levels), blockquotes (\`>\`), bold, italics, inline code (only for identifiers from the inputs)
 - Not allowed: code blocks (\`\`\`), Markdown links, URLs, HTML tags, tables, images. The editor does not support them or the system inserts them from the originals, so writing them yourself gets them removed or makes them wrong.
