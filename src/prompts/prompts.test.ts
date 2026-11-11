@@ -5,7 +5,7 @@ import type { JobContext } from '../jobs.ts';
 import type { PreparedLink } from '../generation/links.ts';
 import { estimateTokens, LINK_PREVIEW_CHARS, PLAN_CATALOG_TOKENS } from '../generation/limits.ts';
 import type { PreparedCommit, PreparedHunk } from '../generation/prepare.ts';
-import type { Analysis, Plan } from '../generation/schemas.ts';
+import { LINK_RELATION_MAX, LINK_ROLES, type Analysis, type Plan } from '../generation/schemas.ts';
 import type { StoredAnalysis } from '../generation/stored-analysis.ts';
 import { FILL_TARGET_MARKER } from '../contract.ts';
 import { getPromptPack } from './index.ts';
@@ -149,6 +149,76 @@ describe('링크 역할 렌더링', () => {
     });
     assert.ok(written.includes('<link id="L1" role="docs" relation="설정 절차를 따른다">'));
     assert.ok(written.includes('<link id="L2" role="other">'));
+  });
+});
+
+describe('독자 기준과 요청·링크·빈칸 답 규칙', () => {
+  it('기획·분석·작성·빈칸 채우기 system 은 독자 규칙을 담는다', () => {
+    assert.equal(getPromptPack('ko').readerRuleMarker, '독자는 이 저장소와 코드, 요청 문구를 본 적이 없다');
+    for (const pack of packs) {
+      assert.ok(pack.readerRuleMarker.length > 0);
+      for (const stage of [pack.plan, pack.analyze, pack.write, pack.fill]) {
+        assert.ok(stage.system.includes(pack.readerRuleMarker), `${pack.locale} 독자 규칙 없음`);
+      }
+    }
+    // 내부 이름은 하는 일로 풀어 쓰고, 공개 API·설정 키는 그대로 써도 된다
+    assert.ok(getPromptPack('ko').write.system.includes('하는 일로 풀어 쓴다'));
+    assert.ok(getPromptPack('ko').write.system.includes('공개 API'));
+    assert.ok(getPromptPack('en').write.system.includes('describe what they do instead'));
+    assert.ok(getPromptPack('en').write.system.includes('Public APIs'));
+  });
+
+  it('기획 system 은 linkRoles 출력과 네 가지 역할을 설명한다', () => {
+    for (const pack of packs) {
+      for (const word of ['linkRoles', ...LINK_ROLES, 'relation', String(LINK_RELATION_MAX)]) {
+        assert.ok(pack.plan.system.includes(word), `${pack.locale}: ${word}`);
+      }
+    }
+  });
+
+  it('요청은 안내이고, 표현을 목차에 옮기지 않으며, R 사실은 두 조건을 갖출 때만 만든다', () => {
+    const ko = getPromptPack('ko');
+    assert.ok(!ko.plan.system.includes('가장 중요한 기준'));
+    assert.ok(ko.plan.system.includes('글에 옮겨 적을 문장이 아니다'));
+    assert.ok(ko.plan.system.includes('그대로 옮기지 않는다'));
+    assert.ok(ko.analyze.system.includes('두 조건을 모두 갖출 때만'));
+    assert.ok(ko.analyze.system.includes('형식·분량 요구'));
+    const en = getPromptPack('en');
+    assert.ok(!en.plan.system.includes('most important guide'));
+    assert.ok(en.plan.system.includes('not text to copy into the post'));
+    assert.ok(en.analyze.system.includes('only when both conditions hold'));
+    assert.ok(en.analyze.system.includes('format or length'));
+  });
+
+  it('분석 system 은 hunk 와 링크를 함께 근거로 문서를 따른 사실을 적으라고 한다', () => {
+    const ko = getPromptPack('ko').analyze.system;
+    for (const phrase of ['role', 'docs', 'relation', '공식 문서', '함께 근거로']) {
+      assert.ok(ko.includes(phrase), `ko: ${phrase}`);
+    }
+    const en = getPromptPack('en').analyze.system;
+    for (const phrase of ['role', 'docs', 'relation', 'official documentation', 'together as evidence']) {
+      assert.ok(en.includes(phrase), `en: ${phrase}`);
+    }
+  });
+
+  it('작성 system 은 링크 역할 속성과 문서를 따른 맥락, 이름 풀어 쓰기를 설명한다', () => {
+    const ko = getPromptPack('ko').write.system;
+    for (const phrase of ['role', 'relation', '혼자 고안한 방식처럼 쓰지 않는다', '새 사실을 만드는 일이 아니다']) {
+      assert.ok(ko.includes(phrase), `ko: ${phrase}`);
+    }
+    const en = getPromptPack('en').write.system;
+    for (const phrase of ['role', 'relation', 'came up with on your own', 'is not adding a new fact']) {
+      assert.ok(en.includes(phrase), `en: ${phrase}`);
+    }
+  });
+
+  it('빈칸 채우기 system 은 답 전체가 아니라 맞는 부분만 고르게 한다', () => {
+    const ko = getPromptPack('ko').fill.system;
+    assert.ok(!ko.includes('답을 사실로 삼아'));
+    assert.ok(ko.includes('맞는 부분만'));
+    const en = getPromptPack('en').fill.system;
+    assert.ok(!en.includes('Treat the answer as fact'));
+    assert.ok(en.includes('only the parts'));
   });
 });
 
