@@ -407,17 +407,22 @@ const normalizeHeadings = (text: string): string => {
   return [...lines.slice(0, first + 1), ...liftHeadings(lowered)].join('\n');
 };
 
-// 본문 제목이 모두 h2 보다 깊으면(예: 모든 절을 ####) 가장 얕은 제목이 h2 가 되도록 모두 같은 만큼 올린다
+// 본문 제목이 모두 h2 보다 깊으면(예: 모든 절을 ####) 가장 얕은 제목이 h2 가 되도록 모두 같은 만큼 올리고, 단계를 건너뛰지 않게 맞춘다
 const HEADING_LINE = /^( {0,3})(#{2,6})(?=[ \t]+\S)/;
 const liftHeadings = (lines: string[]): string[] => {
   const levels = lines.flatMap((line) => {
     const match = HEADING_LINE.exec(line);
     return match ? [match[2].length] : [];
   });
-  const shift = levels.length ? Math.min(...levels) - 2 : 0;
-  if (shift <= 0) return lines;
+  const shift = levels.length ? Math.max(0, Math.min(...levels) - 2) : 0;
+  // 올린 뒤에도 한 번에 두 단계 이상 깊어지지 않게 앞 제목보다 한 단계까지만 깊게 둔다 (h2 다음 h4 → h3)
+  let previous = 1;
   return lines.map((line) =>
-    line.replace(HEADING_LINE, (_whole, indent: string, marks: string) => `${indent}${'#'.repeat(marks.length - shift)}`),
+    line.replace(HEADING_LINE, (_whole, indent: string, marks: string) => {
+      const level = Math.min(marks.length - shift, previous + 1);
+      previous = level;
+      return `${indent}${'#'.repeat(level)}`;
+    }),
   );
 };
 

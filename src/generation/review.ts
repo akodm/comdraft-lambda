@@ -45,6 +45,45 @@ export const validateReview = (raw: RawReview, draft: string): ReviewIssue[] => 
   return issues;
 };
 
+// 모델 검토가 놓쳐도 고쳐 쓰기가 반드시 다루게 할 문장 패턴 (언어별로 프롬프트 묶음이 정한다)
+export interface PatternRule {
+  kind: ReviewKind;
+  pattern: RegExp;
+  fix: string;
+}
+
+// 초안 문장 중 패턴에 걸리는 문장을 검토 지적으로 만든다 (제목 줄과 자리표시자만 있는 줄은 건너뛴다)
+export const findPatternIssues = (draft: string, rules: readonly PatternRule[]): ReviewIssue[] => {
+  const issues: ReviewIssue[] = [];
+  const seen = new Set<string>();
+  for (const line of draft.split('\n')) {
+    const text = line.trim();
+    if (!text || /^#{1,6}\s/.test(text) || !collapse(text.replace(PLACEHOLDER, ''))) continue;
+    // 문장 끝 부호 뒤 공백에서만 나눈다 (`next.config` 같은 점은 나누지 않는다)
+    for (const sentence of text.split(/(?<=[.!?])\s+/)) {
+      const rule = rules.find((item) => item.pattern.test(sentence));
+      if (!rule || seen.has(sentence)) continue;
+      seen.add(sentence);
+      issues.push({ kind: rule.kind, quote: sentence, fix: rule.fix });
+    }
+  }
+  return issues;
+};
+
+// 패턴 지적을 앞에 두고 모델 지적을 이어 붙인다 (공백만 다른 같은 quote 는 하나로, 최대 MAX_REVIEW_ISSUES 개)
+export const mergeIssues = (first: ReviewIssue[], second: ReviewIssue[]): ReviewIssue[] => {
+  const seen = new Set<string>();
+  const merged: ReviewIssue[] = [];
+  for (const issue of [...first, ...second]) {
+    const key = collapse(issue.quote);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(issue);
+    if (merged.length >= MAX_REVIEW_ISSUES) break;
+  }
+  return merged;
+};
+
 // 종류별 자리표시자 번호를 센다 (예: "code:S1" -> 횟수)
 const countPlaceholders = (text: string, kinds: string[]): Map<string, number> => {
   const counts = new Map<string, number>();

@@ -565,6 +565,16 @@ describe('createClaudePipeline', () => {
       assert.ok(markdown.includes('지연 로딩을 넣었다'));
     });
 
+    it('모델 검토가 문제를 못 찾아도 패턴에 걸린 문장은 고쳐 쓰기에 넘긴다', async () => {
+      // 실제 비교 실행: "자세한 이유는 뒤에서 다시 이야기할게요." 를 검토가 놓쳤다
+      const withMeta = MARKDOWN.replace('지연 로딩을 넣었다', '지연 로딩을 넣었다. 자세한 이유는 뒤에서 다시 이야기할게요.');
+      const { llm, writes } = fakeLlm(PLAN, ANALYSIS, withMeta, { revised: MARKDOWN });
+      await run(llm);
+
+      assert.equal(writes.length, 2);
+      assert.ok(writes[1].user.includes('<quote>자세한 이유는 뒤에서 다시 이야기할게요.</quote>'));
+    });
+
     it('reportError 가 없어도 검토 실패는 조용히 넘어간다', async () => {
       const { llm } = fakeLlm(PLAN, ANALYSIS, MARKDOWN, { review: new GenerationFailure('internal') });
       const pipeline = createClaudePipeline({

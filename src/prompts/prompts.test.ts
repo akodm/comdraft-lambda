@@ -496,6 +496,22 @@ describe('옵션 조합 비교 2바퀴에서 찾은 규칙', () => {
   }
 });
 
+describe('검토 패턴', () => {
+  const SAMPLES = {
+    ko: ['정리하면 끝이다.', '자세한 이유는 뒤에서 다시 이야기할게요.', '캐시에 둔다고 해요.', '문서를 따른 것으로 보인다.'],
+    en: ['To sum up, it works.', "We'll come back to this.", 'They say it caches.', 'It appears to follow the docs.'],
+  } as const;
+  for (const pack of packs) {
+    it(`${pack.locale}: 메타 문장·전언·추측을 잡고 보통 문장은 잡지 않는다`, () => {
+      for (const sample of SAMPLES[pack.locale]) {
+        assert.ok(pack.reviewPatterns.some((rule) => rule.pattern.test(sample)), sample);
+      }
+      const plain = pack.locale === 'ko' ? '문서는 cache 에 둔다고 설명한다.' : 'The documentation explains that it caches.';
+      assert.ok(!pack.reviewPatterns.some((rule) => rule.pattern.test(plain)), plain);
+    });
+  }
+});
+
 describe('독자 기준과 요청·링크·빈칸 답 규칙', () => {
   it('기획·분석·작성·빈칸 채우기 system 은 독자 규칙을 담는다', () => {
     assert.equal(getPromptPack('ko').readerRuleMarker, '독자는 이 저장소와 코드, 요청 문구를 본 적이 없다');

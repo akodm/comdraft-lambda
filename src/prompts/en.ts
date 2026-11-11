@@ -611,4 +611,21 @@ Turn the answer above into 1 to 3 paragraphs for the \`${FILL_TARGET_MARKER}\` p
   requiredBlocks,
   blankDefaults,
   referencesHeading: 'References',
+  reviewPatterns: [
+    {
+      kind: 'voice',
+      pattern: /\b(to sum up|in this post|the next blank|the blank below|we'll come back|more on this later|let's (follow|look))\b/i,
+      fix: 'This sentence points at another part of the post or a blank, or announces a summary or outline; remove it and connect the surrounding facts directly.',
+    },
+    {
+      kind: 'voice',
+      pattern: /\b(they say|it is said)\b/i,
+      fix: 'Instead of hearsay, write what the source says, as in "the documentation explains that …".',
+    },
+    {
+      kind: 'unsupported',
+      pattern: /\b(appears to|seems to|can be seen as|can be read as)\b/i,
+      fix: 'Remove the guessing wording and state it as the material says, or remove the sentence if there is no evidence.',
+    },
+  ],
 };

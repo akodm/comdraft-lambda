@@ -19,6 +19,8 @@ import {
 } from './generation/prepare.ts';
 import {
   checkRevision,
+  findPatternIssues,
+  mergeIssues,
   ReviewSchema,
   validateReview,
   type RevisionProblem,
@@ -276,7 +278,8 @@ export const createClaudePipeline = ({
           onUsage,
           ...REVIEW_STAGE,
         });
-        const issues = validateReview(raw, draft);
+        // 패턴으로 찾은 메타 문장·전언·추측은 모델 검토가 놓쳐도 고쳐 쓰기가 다루게 앞에 넣는다
+        const issues = mergeIssues(findPatternIssues(draft, pack.reviewPatterns), validateReview(raw, draft));
 
         const linkIds = new Set(links.map((link) => link.id));
         // 고쳐 쓴 초안이 검사에서 거절되면 그 이유를 알려 주고 한 번만 다시 고쳐 쓴다 (시간이 남을 때만)

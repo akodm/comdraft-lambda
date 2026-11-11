@@ -609,4 +609,21 @@ ${renderFillAnswer(blank.answer)}
   requiredBlocks,
   blankDefaults,
   referencesHeading: '참고',
+  reviewPatterns: [
+    {
+      kind: 'voice',
+      pattern: /정리하면|이 글에서는|다음 빈칸|아래 빈칸|아래에서 (확인|정리|이어)|뒤에서 (다시 )?(이야기|설명|다루)|짚어 볼게|따라가 볼게|살펴볼게/,
+      fix: '글의 다른 위치나 빈칸을 가리키거나 요약·목차를 알리는 문장이라 지우고, 앞뒤 사실로 바로 잇는다.',
+    },
+    {
+      kind: 'voice',
+      pattern: /다고 (해요|한다|합니다)/,
+      fix: '전해 들은 말투 대신 "문서는 ~라고 설명한다" 처럼 출처가 하는 말로 쓴다.',
+    },
+    {
+      kind: 'unsupported',
+      pattern: /것으로 보인|로 볼 수 있|로 읽을 수 있|인 듯하/,
+      fix: '추측하는 말투를 지우고 재료의 사실대로 단정하거나, 근거가 없으면 그 문장을 지운다.',
+    },
+  ],
 };

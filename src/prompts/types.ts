@@ -1,7 +1,7 @@
 import type { JobBlank, JobContext, JobLocale } from '../jobs.ts';
 import type { PreparedLink } from '../generation/links.ts';
 import type { PreparedCommit, PreparedHunk } from '../generation/prepare.ts';
-import type { ReviewIssue, RevisionProblem } from '../generation/review.ts';
+import type { PatternRule, ReviewIssue, RevisionProblem } from '../generation/review.ts';
 import type { Analysis, BlankKind, Plan } from '../generation/schemas.ts';
 import type { StoredAnalysis } from '../generation/stored-analysis.ts';
 
@@ -106,4 +106,6 @@ export interface PromptPack {
   blankDefaults: Record<BlankKind, string>;
   // 글 끝에 붙이는 참고 절 제목
   referencesHeading: string;
+  // 모델 검토가 놓쳐도 고쳐 쓰기가 다루게 할 문장 패턴 (메타 문장, 전언, 추측)
+  reviewPatterns: readonly PatternRule[];
 }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { checkRevision, validateReview } from './review.ts';
+import { checkRevision, findPatternIssues, mergeIssues, validateReview, type ReviewIssue } from './review.ts';
 
 // 받아들인 본문, 거절이면 null
 const acceptRevision = (draft: string, revised: string, linkIds: Set<string>): string | null => {
@@ -124,5 +124,32 @@ describe('checkRevision', () => {
     assert.deepEqual(checkRevision(DRAFT, `${DRAFT} {{link:L9}}`, links), {
       problem: { kind: 'unknown_link', placeholders: ['{{link:L9}}'] },
     });
+  });
+});
+
+describe('findPatternIssues', () => {
+  const rules = [
+    { kind: 'voice' as const, pattern: /정리하면|뒤에서 다시/, fix: '지운다' },
+    { kind: 'unsupported' as const, pattern: /것으로 보인/, fix: '단정한다' },
+  ];
+  it('패턴에 걸리는 문장을 그대로 quote 로 만들고, 제목·자리표시자 줄과 이미 본 문장은 건너뛴다', () => {
+    // 실제 비교 실행: "자세한 이유는 뒤에서 다시 이야기할게요." 같은 문장을 모델 검토가 놓쳤다
+    const draft = '# 정리하면 제목\n\n`next.config.ts` 를 바꿨다. 자세한 이유는 뒤에서 다시 이야기할게요.\n\n{{ask:U1}}\n\n문서대로 한 것으로 보인다. 정리하면 끝이다.\n\n- 정리하면 목록도 본다.';
+    assert.deepEqual(findPatternIssues(draft, rules), [
+      { kind: 'voice', quote: '자세한 이유는 뒤에서 다시 이야기할게요.', fix: '지운다' },
+      { kind: 'unsupported', quote: '문서대로 한 것으로 보인다.', fix: '단정한다' },
+      { kind: 'voice', quote: '정리하면 끝이다.', fix: '지운다' },
+      { kind: 'voice', quote: '- 정리하면 목록도 본다.', fix: '지운다' },
+    ]);
+  });
+});
+
+describe('mergeIssues', () => {
+  const issue = (quote: string, kind: ReviewIssue['kind'] = 'voice'): ReviewIssue => ({ kind, quote, fix: 'f' });
+  it('패턴 지적을 앞에 두고, 공백만 다른 같은 quote 는 하나로, 8개까지 남긴다', () => {
+    const merged = mergeIssues([issue('가 나.')], [issue('가  나.', 'flow'), ...Array.from({ length: 9 }, (_, i) => issue(`문장${i}.`, 'flow'))]);
+    assert.equal(merged.length, 8);
+    assert.deepEqual(merged[0], issue('가 나.'));
+    assert.equal(merged.filter((item) => item.quote.replace(/\s+/g, ' ') === '가 나.').length, 1);
   });
 });
