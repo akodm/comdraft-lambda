@@ -276,6 +276,41 @@ describe('운영 초안 비교에서 찾은 문제 규칙', () => {
   }
 });
 
+// 운영 작업 기록(linkary 커밋 3개)에서 확인한 문제: 요청의 소감이 빠지고 같은 내용을 빈칸으로 다시 물음,
+// 요청이 짝지은 원인을 다른 변경에 붙임, 빈칸 다듬기가 답에 없는 판단을 덧붙임
+describe('운영 작업 기록에서 찾은 요청·빈칸 규칙', () => {
+  const PHRASES = {
+    ko: {
+      impression: '요청에 적힌 소감이나 평가',
+      causePair: '그 짝을 지킨다',
+      noReask: '요청에 이미 적힌 내용은 다시 묻지 않는다',
+      noSourcePhrase: '"요청에 따르면" 같은 출처 말',
+      fillNoAdd: '답에 없는 판단, 이유, 기대',
+    },
+    en: {
+      impression: 'Keep impressions or opinions stated in the request',
+      causePair: 'keep the pair',
+      noReask: 'what the request already says',
+      noSourcePhrase: 'source phrases such as "according to the request"',
+      fillNoAdd: 'Do not turn judgments, reasons, or expectations that are not in the answer into new sentences',
+    },
+  } as const;
+
+  for (const pack of packs) {
+    const phrase = PHRASES[pack.locale];
+
+    it(`${pack.locale}: 분석은 요청의 소감을 사실로 남기고, 원인·해결 짝을 지키고, 이미 답한 것을 묻지 않는다`, () => {
+      for (const key of ['impression', 'causePair', 'noReask', 'noSourcePhrase'] as const) {
+        assert.ok(pack.analyze.system.includes(phrase[key]), key);
+      }
+    });
+
+    it(`${pack.locale}: 빈칸 다듬기는 답에 없는 판단을 덧붙이지 않는다`, () => {
+      assert.ok(pack.fill.system.includes(phrase.fillNoAdd));
+    });
+  }
+});
+
 describe('독자 기준과 요청·링크·빈칸 답 규칙', () => {
   it('기획·분석·작성·빈칸 채우기 system 은 독자 규칙을 담는다', () => {
     assert.equal(getPromptPack('ko').readerRuleMarker, '독자는 이 저장소와 코드, 요청 문구를 본 적이 없다');
