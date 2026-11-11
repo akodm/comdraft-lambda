@@ -3,6 +3,7 @@ import type { PreparedLink } from '../generation/links.ts';
 import { estimateTokens, LINK_PREVIEW_CHARS, PLAN_CATALOG_TOKENS } from '../generation/limits.ts';
 import type { PreparedCommit, PreparedFile, PreparedHunk } from '../generation/prepare.ts';
 import type { Analysis, Plan } from '../generation/schemas.ts';
+import type { StoredAnalysis } from '../generation/stored-analysis.ts';
 import {
   LENGTHS,
   POST_TYPES,
@@ -25,7 +26,7 @@ import {
 const TAGS = [
   'request', 'commit', 'message', 'files', 'hunk', 'link', 'links', 'title', 'text', 'plan',
   'section', 'heading', 'purpose', 'hunks', 'takeaway', 'outline', 'fact', 'code', 'point',
-  'source', 'blank',
+  'source', 'blank', 'context', 'analysis', 'question', 'answer',
 ] as const;
 type Tag = (typeof TAGS)[number];
 
@@ -268,3 +269,41 @@ export const renderOutline = (
       ...plan.sections.map((section, index) => renderSection(index, section, analysis, hunks)),
     ].join('\n'),
   );
+
+// ---- 빈칸 채우기: 지금 본문, 저장한 분석, 질문, 답 ----
+
+// 지금 본문 Markdown. 채울 자리는 {{target}} 한 줄로 이미 표시돼 있다.
+export const renderFillContext = (markdown: string): string =>
+  element('context', {}, escapeTagText(markdown));
+
+// 저장한 분석. 재료가 하나도 없으면 빈 문자열 (프롬프트가 없음 안내로 바꿈)
+export const renderStoredAnalysis = (analysis: StoredAnalysis | null): string => {
+  const sections = (analysis?.sections ?? []).filter(
+    (section) => section.facts.length + section.points.length + section.questions.length > 0,
+  );
+  if (sections.length === 0) return '';
+  return element(
+    'analysis',
+    {},
+    sections
+      .map((section) =>
+        element(
+          'section',
+          {},
+          [
+            inline('heading', {}, section.heading),
+            ...section.facts.map((fact) => inline('fact', {}, fact)),
+            ...section.points.map((point) => inline('point', {}, point)),
+            ...section.questions.map((question) => inline('blank', {}, question)),
+          ].join('\n'),
+        ),
+      )
+      .join('\n'),
+  );
+};
+
+export const renderFillQuestion = (question: string): string => inline('question', {}, question);
+
+export const renderFillAnswer = (answer: string): string =>
+  element('answer', {}, escapeTagText(answer));
+

@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { estimateJobTokens } from './estimate.ts';
+import { estimateFillTokens, estimateJobTokens } from './estimate.ts';
 import {
   ESTIMATE_ANALYSIS_OUTPUT,
+  ESTIMATE_FILL_OUTPUT,
   ESTIMATE_PLAN_OUTPUT,
   ESTIMATE_WRITE_OUTPUT,
   HUNK_TOKEN_BUDGET,
@@ -37,5 +38,12 @@ describe('estimateJobTokens', () => {
     assert.equal(ESTIMATE_PLAN_OUTPUT, 3_000);
     assert.equal(ESTIMATE_ANALYSIS_OUTPUT, 6_000);
     assert.deepEqual(ESTIMATE_WRITE_OUTPUT, { short: 6_000, medium: 9_000, long: 14_000 });
+  });
+});
+
+describe('estimateFillTokens', () => {
+  it('system + 사용자 입력(본문·재료·질문·답) + 출력 여유분 1,500', () => {
+    assert.equal(ESTIMATE_FILL_OUTPUT, 1_500);
+    assert.equal(estimateFillTokens({ system: 1_200, user: 3_000 }), 1_200 + 3_000 + 1_500);
   });
 });

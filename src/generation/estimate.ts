@@ -1,6 +1,7 @@
 import type { Length } from '../prompts/types.ts';
 import {
   ESTIMATE_ANALYSIS_OUTPUT,
+  ESTIMATE_FILL_OUTPUT,
   ESTIMATE_PLAN_OUTPUT,
   ESTIMATE_WRITE_OUTPUT,
   HUNK_TOKEN_BUDGET,
@@ -46,3 +47,10 @@ export const estimateJobTokens = (
   ESTIMATE_PLAN_OUTPUT * 2 +
   ESTIMATE_ANALYSIS_OUTPUT * 2 +
   ESTIMATE_WRITE_OUTPUT[length];
+
+/**
+ * 빈칸 채우기 작업 한 건의 토큰 예상량 (Claude 한 번 호출)
+ * - user 는 실제로 보낼 사용자 입력(본문, 저장한 분석, 질문, 답, 옵션)을 잰 값
+ */
+export const estimateFillTokens = (promptTokens: { system: number; user: number }): number =>
+  promptTokens.system + promptTokens.user + ESTIMATE_FILL_OUTPUT;

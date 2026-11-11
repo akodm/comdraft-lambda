@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { Lexer, type Token } from 'marked';
-import { assemble } from './assemble.ts';
+import { assemble, sanitizeFill } from './assemble.ts';
 import { GenerationFailure } from '../errors.ts';
 import type { PreparedCommit, PreparedHunk } from './prepare.ts';
 import type { PreparedLink } from './links.ts';
@@ -559,5 +559,86 @@ describe('assemble 표·URL 괄호', () => {
     const link = found.find((token) => token.type === 'link') as unknown as { href: string; text: string };
     assert.equal(link.href, 'https://ex.com/a%29b%28c');
     assert.equal(link.text, 't');
+  });
+});
+
+describe('sanitizeFill', () => {
+  const evidence = '본문에 나온 useLazyImage 와 답';
+  const fill = (markdown: string): string => sanitizeFill(markdown, evidence);
+  const types = (markdown: string): string[] => {
+    const found: Token[] = [];
+    collectTokens(new Lexer({ gfm: true }).lex(markdown), found);
+    return found.map((token) => token.type);
+  };
+  // 맨 위 블록이 문단(과 빈 줄)뿐인지
+  const topTypes = (markdown: string): string[] =>
+    new Lexer({ gfm: true }).lex(markdown).map((token) => token.type).filter((type) => type !== 'space');
+
+  it('문단은 그대로 두고 문단 사이를 빈 줄 하나로 정리한다', () => {
+    assert.equal(fill('첫 문단이다.\n\n\n\n둘째 문단이다.\n'), '첫 문단이다.\n\n둘째 문단이다.');
+  });
+
+  it('제목 줄과 setext 밑줄, 구분선은 지운다', () => {
+    const out = fill('# 제목\n\n## 절 제목\n\n문단이다.\n\n밑줄 제목\n===\n\n---\n\n***');
+    assert.ok(!out.includes('제목\n'), out);
+    assert.ok(!out.includes('#'), out);
+    assert.deepEqual(topTypes(out), ['paragraph', 'paragraph'], out);
+  });
+
+  it('코드 블록은 울타리와 내용을 함께 지운다 (닫히지 않은 울타리도)', () => {
+    const out = fill('앞 문단이다.\n\n```ts\nconst secret = 1;\n```\n\n뒤 문단이다.\n\n~~~\n안 닫힌 코드');
+    assert.equal(out, '앞 문단이다.\n\n뒤 문단이다.');
+  });
+
+  it('링크, 이미지, URL, HTML 은 글자로 무력화한다', () => {
+    const out = fill('[여기](https://evil.example) 와 ![img](https://evil.example/a.png) 그리고 <script>alert(1)</script> www.evil.example 메일 a@b.co');
+    const found = types(out);
+    for (const type of ['link', 'image', 'html']) assert.ok(!found.includes(type), `${type}: ${out}`);
+    assert.ok(!out.includes('evil.example'), out);
+  });
+
+  it('목록·인용·표·들여쓰기는 문단 글자로 바꾼다', () => {
+    const out = fill('- 항목 하나\n- 항목 둘\n\n> 인용한 말\n\n        들여쓴 줄');
+    assert.deepEqual(topTypes(out), ['paragraph', 'paragraph', 'paragraph'], out);
+    assert.ok(out.includes('항목 하나') && out.includes('인용한 말') && out.includes('들여쓴 줄'), out);
+    const table = fill('| a | b |\n|---|---|\n| 1 | 2 |\n\n칸 | 칸\n:---: | ---');
+    assert.ok(!types(table).includes('table'), table);
+    assert.ok(topTypes(table).every((type) => type === 'paragraph'), table);
+  });
+
+  it('번호 목록 표시는 글자로 남긴다', () => {
+    const out = fill('1. 첫째로 바꿨다');
+    assert.deepEqual(topTypes(out), ['paragraph'], out);
+    assert.ok(out.includes('첫째로 바꿨다'), out);
+  });
+
+  it('자리표시자와 빈칸 지시문은 지운다', () => {
+    const out = fill('{{target}} 앞 문단 {{code:S1}} 이다.\n\n:::blank {kind="detail" hint="x"}\n:::\n\n[빈칸: 다른 질문] 뒤 문단이다.');
+    assert.ok(!out.includes('{{') && !out.includes(':::'), out);
+    assert.ok(out.includes('앞 문단'), out);
+  });
+
+  it('문단은 최대 3개까지만 남긴다', () => {
+    assert.equal(fill('하나.\n\n둘.\n\n셋.\n\n넷.\n\n다섯.'), '하나.\n\n둘.\n\n셋.');
+  });
+
+  it('근거에 있는 인라인 코드만 코드로 남긴다', () => {
+    const out = fill('`useLazyImage` 를 고쳤고 `madeUp()` 도 바꿨다.');
+    assert.ok(out.includes('`useLazyImage`'), out);
+    assert.ok(!out.includes('`madeUp()`'), out);
+  });
+
+  it('숫자는 인라인 코드 표지와 섞이지 않고 그대로 남는다', () => {
+    assert.equal(fill('3초에서 0.4초로 줄었고 `useLazyImage` 2개를 썼다.'), '3초에서 0.4초로 줄었고 `useLazyImage` 2개를 썼다.');
+  });
+
+  it('정리 후 글이 남지 않으면 invalid_result 로 실패한다', () => {
+    for (const markdown of ['', '# 제목만', '```\ncode\n```', '{{target}}']) {
+      assert.throws(
+        () => fill(markdown),
+        (error) => error instanceof GenerationFailure && error.code === 'invalid_result',
+        markdown,
+      );
+    }
   });
 });

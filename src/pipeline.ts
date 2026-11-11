@@ -18,6 +18,7 @@ import {
   type Analysis,
   type Plan,
 } from './generation/schemas.ts';
+import { toStoredAnalysis, type StoredAnalysis } from './generation/stored-analysis.ts';
 import { validateAnalysis, validatePlan } from './generation/validate.ts';
 import { getPromptPack } from './prompts/index.ts';
 import { renderCatalog, resolveOptions } from './prompts/render.ts';
@@ -33,6 +34,8 @@ export interface PipelineInput {
   commits: CommitDetail[];
   // Claude 응답 하나를 받을 때마다 그 사용 토큰을 기록
   onUsage: (tokens: number) => Promise<void>;
+  // 분석 단계를 마치면 나중의 빈칸 채우기가 쓸 재료를 저장
+  onAnalysis?: (analysis: StoredAnalysis) => Promise<void>;
 }
 
 export interface Pipeline<P = unknown, C = unknown, A = unknown> {
@@ -143,7 +146,7 @@ export const createClaudePipeline = ({
     return { ...prepared, plan };
   },
 
-  analyze: async ({ context, onUsage }, classified) => {
+  analyze: async ({ context, onUsage, onAnalysis }, classified) => {
     const pack = getPromptPack(context.locale);
     const { commits, hunks, links, plan } = classified;
     // 모델이 본 hunk 만 근거로 인정하도록 고른 것만 넘기고 검증한다
@@ -168,6 +171,9 @@ export const createClaudePipeline = ({
       blankDefaults: pack.blankDefaults,
       length: context.length,
     });
+
+    // 검증을 거친 분석(빈칸 상한 적용 후)만 저장한다
+    await onAnalysis?.(toStoredAnalysis(plan, analysis));
 
     return { ...classified, analysis };
   },

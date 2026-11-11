@@ -6,6 +6,7 @@ import { loadConfig, type LambdaConfig } from './config.ts';
 import { parseGenerationRequest } from './contract.ts';
 import { getDatabase } from './db.ts';
 import { createCommitFetcher } from './github.ts';
+import { createClaudeFiller } from './fill.ts';
 import { createJobStore } from './jobs.ts';
 import { createLinkFetch, fetchReferenceLinks } from './generation/links.ts';
 import { createAnthropicClient } from './generation/anthropic-client.ts';
@@ -33,6 +34,7 @@ const getAnthropicClient = (config: LambdaConfig) => {
 /**
  * API Gateway(REST, IAM 인증)가 비동기(Event)로 호출하는 진입점
  * - 요청 본문: { jobId, githubToken } (API Gateway 매핑 템플릿이 본문을 그대로 이벤트로 전달)
+ * - 작업 종류(초안 작성 / 빈칸 채우기)는 jobId 로 DB 에서 읽어 나눔
  * - 비동기 호출이라 반환값은 호출한 쪽에 전달되지 않음 (결과는 DB 와 Realtime 신호로 알림)
  * - 토큰과 요청 내용은 로그로 남기지 않음 (CloudWatch Logs 미사용)
  */
@@ -54,6 +56,7 @@ export const handler = async (
   // 링크 요청 함수는 호출마다 한 번만 만든다
   const linkFetch = createLinkFetch();
   const remainingTimeMs = () => context.getRemainingTimeInMillis();
+  const llm = createAnthropicLlm(client, { remainingTimeMs });
 
   const outcome = await runJob(request.jobId, {
     jobs: createJobStore(sql),
@@ -63,9 +66,11 @@ export const handler = async (
     }),
     fetchCommit: createCommitFetcher(request.githubToken),
     pipeline: createClaudePipeline({
-      llm: createAnthropicLlm(client, { remainingTimeMs }),
+      llm,
       fetchLinks: (urls) => fetchReferenceLinks(urls, linkFetch),
     }),
+    // 빈칸 채우기 작업은 GitHub 토큰을 쓰지 않는다
+    filler: createClaudeFiller({ llm }),
     remainingTimeMs,
   });
 

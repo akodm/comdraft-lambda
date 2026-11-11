@@ -5,6 +5,7 @@ import type { PromptPack } from './types.ts';
 
 export type {
   AnalyzePromptInput,
+  FillPromptInput,
   PlanPromptInput,
   PromptPack,
   WritePromptInput,

@@ -8,6 +8,7 @@ import { estimateJobTokens } from './generation/estimate.ts';
 import { estimateTokens } from './generation/limits.ts';
 import type { LlmClient } from './generation/llm.ts';
 import type { Analysis, Plan } from './generation/schemas.ts';
+import type { StoredAnalysis } from './generation/stored-analysis.ts';
 import {
   createClaudePipeline,
   type PipelineInput,
@@ -16,6 +17,7 @@ import { getPromptPack } from './prompts/index.ts';
 import { renderCatalog } from './prompts/render.ts';
 
 const CONTEXT: JobContext = {
+  kind: 'draft',
   prompt: '지연 로딩 적용기를 써 줘',
   tone: 'plain',
   postType: 'experience',
@@ -123,11 +125,15 @@ const run = async (
     fetchLinks: options.fetchLinks ?? (async () => LINKS),
   });
   const usage: number[] = [];
+  const stored: StoredAnalysis[] = [];
   const input: PipelineInput = {
     context: { ...CONTEXT, ...options.context },
     commits: options.commits ?? COMMITS,
     onUsage: async (tokens) => {
       usage.push(tokens);
+    },
+    onAnalysis: async (analysis) => {
+      stored.push(analysis);
     },
   };
   const prepared = await pipeline.prepare(input);
@@ -135,7 +141,7 @@ const run = async (
   const classified = await pipeline.classify(input, prepared);
   const analyzed = await pipeline.analyze(input, classified);
   const markdown = await pipeline.write(input, analyzed);
-  return { prepared, estimate, classified, analyzed, markdown, usage };
+  return { prepared, estimate, classified, analyzed, markdown, usage, stored };
 };
 
 // 준비와 예상량만 계산한다 (Claude 는 부르지 않음)
@@ -336,5 +342,24 @@ describe('createClaudePipeline', () => {
     const { usage } = await run(llm);
 
     assert.deepEqual(usage, [CALL_USAGE, CALL_USAGE, CALL_USAGE]);
+  });
+
+  it('분석 단계는 검증한 분석을 저장용으로 한 번 넘긴다 (코드 원문·근거 없이, 상한을 넘은 빈칸 없이)', async () => {
+    const analysis: Analysis = {
+      ...ANALYSIS,
+      unknowns: ['U1', 'U2', 'U3'].map((id) => ({ id, section: 0, kind: 'detail' as const, ask: `${id} 질문` })),
+    };
+    const { llm } = fakeLlm(PLAN, analysis, MARKDOWN);
+    const { stored } = await run(llm);
+
+    assert.deepEqual(stored, [
+      {
+        version: 1,
+        sections: [{ heading: '적용', facts: ['지연 로딩을 넣었다'], points: ['값 변경'], questions: ['U1 질문', 'U2 질문'] }],
+      },
+    ]);
+    const text = JSON.stringify(stored);
+    assert.ok(!text.includes('const b'), text);
+    assert.ok(!text.includes('C1'), text);
   });
 });

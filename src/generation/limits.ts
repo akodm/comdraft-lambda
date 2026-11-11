@@ -24,6 +24,10 @@ export const ESTIMATE_WRITE_OUTPUT: Readonly<Record<Length, number>> = {
   medium: 9_000,
   long: 14_000,
 };
+// 빈칸 채우기 예상량에 넣는 출력 여유분
+export const ESTIMATE_FILL_OUTPUT = 1_500;
+// 빈칸 채우기 결과로 남기는 최대 문단 수 (comdraft MAX_FILL_PARAGRAPHS 와 같은 값)
+export const MAX_FILL_PARAGRAPHS = 3;
 // 초안에 삽입하는 코드 블록 최대 줄 수
 export const MAX_CODE_LINES = 40;
 

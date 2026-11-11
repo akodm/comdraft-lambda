@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { GenerationBroadcastPayload } from './contract.ts';
 import { GithubApiError } from './errors.ts';
+import { FILL_TARGET_MARKER } from './contract.ts';
+import { createClaudeFiller } from './fill.ts';
+import type { LlmClient } from './generation/llm.ts';
+import type { StoredAnalysis } from './generation/stored-analysis.ts';
 import type { CommitDetail } from './github.ts';
 import type { JobContext, JobStore, QuotaReservation } from './jobs.ts';
 import type { Pipeline } from './pipeline.ts';
@@ -9,6 +13,7 @@ import { createPlaceholderPipeline } from './placeholder-pipeline.ts';
 import { MIN_REMAINING_MS, runJob, type RunJobDependencies } from './run-job.ts';
 
 const CONTEXT: JobContext = {
+  kind: 'draft',
   prompt: '이미지 지연 로딩 정리',
   tone: 'friendly',
   postType: 'tutorial',
@@ -40,6 +45,9 @@ const createMemoryJobs = (
     errorCode: null as string | null,
     estimatedTokens: null as number | null,
     usedTokens: 0,
+    analysis: null as StoredAnalysis | null,
+    // 같은 초안의 최근 완료 초안 작성 작업이 저장한 분석 (loadLatestAnalysis 가 돌려줌)
+    latestAnalysis: null as StoredAnalysis | null,
   };
 
   const jobs: JobStore = {
@@ -89,9 +97,30 @@ const createMemoryJobs = (
         state.usedTokens += tokens;
       }
     },
+    saveAnalysis: async (_jobId, analysis) => {
+      state.analysis = analysis;
+    },
+    loadLatestAnalysis: async () => state.latestAnalysis,
   };
 
   return { jobs, state };
+};
+
+// 빈칸 채우기용 가짜 LLM (write 호출 수와 받은 입력을 기록, 호출마다 정해 둔 사용량을 보고)
+const createFillLlm = (markdown = '첫 화면이 3초 정도 걸렸다.', usage = 700) => {
+  const calls: { system: string; user: string }[] = [];
+  const llm: LlmClient = {
+    parse: async () => {
+      calls.push({ system: 'parse', user: '' });
+      throw new Error('parse 는 쓰지 않는다');
+    },
+    write: async (req) => {
+      calls.push({ system: req.system, user: req.user });
+      await req.onUsage?.(usage);
+      return markdown;
+    },
+  };
+  return { llm, calls };
 };
 
 const createDependencies = (
@@ -110,6 +139,7 @@ const createDependencies = (
     },
     fetchCommit: async ({ sha }) => commit(sha, `feat: ${sha} 작업`),
     pipeline: createPlaceholderPipeline(),
+    filler: createClaudeFiller({ llm: createFillLlm().llm }),
     remainingTimeMs: () => 5 * 60 * 1000,
     ...overrides,
   };
@@ -264,5 +294,168 @@ describe('runJob', () => {
     assert.equal(await runJob('job-1', dependencies), 'failed');
     assert.deepEqual(stages, []);
     assert.equal(state.errorCode, 'timeout');
+  });
+});
+
+const BLANK_CONTEXT: JobContext = {
+  ...CONTEXT,
+  kind: 'fill',
+  prompt: '3초 정도 걸렸다',
+  commitShas: [],
+  blank: {
+    id: '6f1c2a4e-0000-4000-8000-000000000001',
+    question: '첫 화면이 얼마나 느렸나요?',
+    answer: '3초 정도 걸렸다',
+    context: `# 지연 로딩\n\n앞 문단이다.\n\n${FILL_TARGET_MARKER}\n\n뒤 문단이다.`,
+  },
+};
+
+const STORED: StoredAnalysis = {
+  version: 1,
+  sections: [{ heading: '느린 첫 화면', facts: ['이미지를 모두 먼저 불러왔다'], points: [], questions: [] }],
+};
+
+// 빈칸 채우기 작업: GitHub 조회는 횟수만 센다
+const createFillDependencies = (
+  options: { reservation?: QuotaReservation; context?: JobContext; markdown?: string } = {},
+) => {
+  const fill = createFillLlm(options.markdown);
+  let githubCalls = 0;
+  const { pipeline, stages } = createUsagePipeline({ classify: 1_000, analyze: 2_000, write: 3_000 });
+  const filler = createClaudeFiller({ llm: fill.llm });
+  const created = createDependencies(
+    {
+      pipeline,
+      filler,
+      fetchCommit: async ({ sha }) => {
+        githubCalls += 1;
+        return commit(sha, 'x');
+      },
+    },
+    undefined,
+    options.reservation,
+  );
+  created.dependencies.jobs.loadContext = async () => options.context ?? BLANK_CONTEXT;
+  return { ...created, filler, calls: fill.calls, stages, githubCalls: () => githubCalls };
+};
+
+describe('runJob (빈칸 채우기)', () => {
+  it('Claude 를 한 번 불러 다듬은 문단을 저장하고, 사용량과 예상량을 기록한다', async () => {
+    const { dependencies, state, signals, calls, stages, githubCalls, filler } = createFillDependencies();
+    state.latestAnalysis = STORED;
+
+    assert.equal(await runJob('job-1', dependencies), 'completed');
+    assert.equal(calls.length, 1);
+    assert.deepEqual(stages, []);
+    assert.equal(githubCalls(), 0);
+    assert.equal(state.status, 'completed');
+    assert.equal(state.result, '첫 화면이 3초 정도 걸렸다.');
+    assert.equal(state.usedTokens, 700);
+    assert.equal(
+      state.estimatedTokens,
+      filler.estimate({ context: BLANK_CONTEXT, blank: BLANK_CONTEXT.blank!, analysis: STORED, onUsage: async () => {} }),
+    );
+    // 저장한 분석과 답이 프롬프트에 들어간다
+    assert.ok(calls[0].user.includes('<fact>이미지를 모두 먼저 불러왔다</fact>'));
+    assert.ok(calls[0].user.includes('<answer>\n3초 정도 걸렸다\n</answer>'));
+    // 중간 단계 없이 시작(0) → 완료(3)
+    assert.deepEqual(
+      signals.map(({ status, step }) => `${status}:${step}`),
+      ['running:0', 'completed:3'],
+    );
+    // 빈칸 채우기는 분석을 저장하지 않는다
+    assert.equal(state.analysis, null);
+  });
+
+  it('저장한 분석이 없어도 본문과 답만으로 완료한다', async () => {
+    const { dependencies, state, calls } = createFillDependencies();
+
+    assert.equal(await runJob('job-1', dependencies), 'completed');
+    assert.equal(calls.length, 1);
+    assert.ok(!calls[0].user.includes('<analysis>'));
+    assert.equal(state.status, 'completed');
+  });
+
+  it('할당량을 넘으면 Claude 호출 없이 quota_exceeded, 사용량 0', async () => {
+    const { dependencies, state, signals, calls } = createFillDependencies({ reservation: 'exceeded' });
+
+    assert.equal(await runJob('job-1', dependencies), 'failed');
+    assert.equal(calls.length, 0);
+    assert.equal(state.errorCode, 'quota_exceeded');
+    assert.ok((state.estimatedTokens ?? 0) > 0);
+    assert.equal(state.usedTokens, 0);
+    assert.equal(signals.at(-1)?.status, 'failed');
+  });
+
+  it('정책이 없으면 Claude 호출 없이 internal', async () => {
+    const { dependencies, state, calls } = createFillDependencies({ reservation: 'no_plan' });
+
+    assert.equal(await runJob('job-1', dependencies), 'failed');
+    assert.equal(calls.length, 0);
+    assert.equal(state.errorCode, 'internal');
+  });
+
+  it('빈칸 값이 없는 빈칸 채우기 작업은 Claude 호출 없이 internal', async () => {
+    const { dependencies, state, calls } = createFillDependencies({
+      context: { ...BLANK_CONTEXT, blank: undefined },
+    });
+
+    assert.equal(await runJob('job-1', dependencies), 'failed');
+    assert.equal(calls.length, 0);
+    assert.equal(state.errorCode, 'internal');
+    assert.equal(state.estimatedTokens, null);
+  });
+
+  it('정리 후 남는 글이 없으면 invalid_result, 쓴 사용량은 남는다', async () => {
+    const { dependencies, state, calls } = createFillDependencies({ markdown: '# 제목만' });
+
+    assert.equal(await runJob('job-1', dependencies), 'failed');
+    assert.equal(calls.length, 1);
+    assert.equal(state.errorCode, 'invalid_result');
+    assert.equal(state.usedTokens, 700);
+  });
+
+  it('남은 시간이 부족하면 Claude 를 부르지 않고 timeout', async () => {
+    const { dependencies, state, calls } = createFillDependencies();
+    dependencies.remainingTimeMs = () => MIN_REMAINING_MS - 1;
+
+    assert.equal(await runJob('job-1', dependencies), 'failed');
+    assert.equal(calls.length, 0);
+    assert.equal(state.errorCode, 'timeout');
+  });
+});
+
+describe('runJob (분석 저장)', () => {
+  // 분석 단계에서 저장할 분석을 넘기는 파이프라인
+  const analysisPipeline = (): Pipeline => ({
+    prepare: async () => ({}),
+    estimate: () => 1,
+    classify: async () => ({}),
+    analyze: async ({ onAnalysis }) => {
+      await onAnalysis?.(STORED);
+    },
+    write: async () => '# 결과',
+  });
+
+  it('초안 작성 작업은 분석 단계 뒤 분석을 저장한다', async () => {
+    const { dependencies, state } = createDependencies({ pipeline: analysisPipeline() });
+
+    assert.equal(await runJob('job-1', dependencies), 'completed');
+    assert.deepEqual(state.analysis, STORED);
+  });
+
+  it('분석 저장에 실패해도 작업은 완료된다 (빈칸 채우기는 분석 없이도 동작)', async () => {
+    const reported: unknown[] = [];
+    const { dependencies, state } = createDependencies({
+      pipeline: analysisPipeline(),
+      reportError: (error) => reported.push(error),
+    });
+    dependencies.jobs.saveAnalysis = async () => {
+      throw new Error('db down');
+    };
+
+    assert.equal(await runJob('job-1', dependencies), 'completed');
+    assert.equal(state.status, 'completed');
+    assert.equal(reported.length, 1);
   });
 });

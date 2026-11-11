@@ -7,7 +7,15 @@
 export type GenerationStatus = 'queued' | 'running' | 'completed' | 'failed';
 
 // 완료한 단계 (0: 시작 전, 1: 구분, 2: 분석, 3: 작성)
+// 빈칸 채우기 작업은 중간 단계 없이 0 에서 완료(3)로 바로 넘어감
 export type GenerationStep = 0 | 1 | 2 | 3;
+
+// 작업 종류 (draft_prompt.kind): 초안 작성 / 빈칸 채우기
+export type GenerationJobKind = 'draft' | 'fill';
+
+// 빈칸 채우기 본문 스냅숏(draft_prompt.blank_context)에서 채울 자리를 가리키는 한 줄
+// (comdraft lib/generation/blank-fill.ts 의 FILL_TARGET_MARKER 와 같은 값)
+export const FILL_TARGET_MARKER = '{{target}}';
 
 // API Gateway → Lambda 요청 본문. 나머지 값은 jobId 로 DB 에서 읽음
 export interface GenerationRequest {

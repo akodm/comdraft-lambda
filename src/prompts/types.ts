@@ -1,7 +1,8 @@
-import type { JobContext, JobLocale } from '../jobs.ts';
+import type { JobBlank, JobContext, JobLocale } from '../jobs.ts';
 import type { PreparedLink } from '../generation/links.ts';
 import type { PreparedCommit, PreparedHunk } from '../generation/prepare.ts';
 import type { Analysis, BlankKind, Plan } from '../generation/schemas.ts';
+import type { StoredAnalysis } from '../generation/stored-analysis.ts';
 
 // 작성 옵션 값. comdraft lib/studio/options.ts 의 목록과 같게 유지한다.
 export const TONES = ['plain', 'friendly', 'professional'] as const;
@@ -48,6 +49,13 @@ export interface WritePromptInput {
   links: PreparedLink[];
 }
 
+// 빈칸 채우기: 지금 본문(대상 자리 {{target}}), 첫 작성 때 저장한 분석(없을 수 있음), 질문과 답
+export interface FillPromptInput {
+  context: JobContext;
+  blank: JobBlank;
+  analysis: StoredAnalysis | null;
+}
+
 interface Stage<I> {
   system: string;
   user: (input: I) => string;
@@ -63,6 +71,8 @@ export interface PromptPack {
   plan: Stage<PlanPromptInput>;
   analyze: Stage<AnalyzePromptInput>;
   write: Stage<WritePromptInput>;
+  // 빈칸 하나를 글쓴이 답으로 다듬는 단계 (초안 작성과 별개의 작업)
+  fill: Stage<FillPromptInput>;
   // 문체 지시
   tone: Record<Tone, string>;
   // 글의 흐름 (독자를 이끌어 가는 순서)

@@ -2,6 +2,7 @@ import { Lexer, type Token } from 'marked';
 
 import { GenerationFailure } from '../errors.ts';
 import { buildCodeLines } from '../prompts/render.ts';
+import { MAX_FILL_PARAGRAPHS } from './limits.ts';
 import type { PreparedLink } from './links.ts';
 import type { PreparedCommit, PreparedHunk } from './prepare.ts';
 import type { Analysis } from './schemas.ts';
@@ -449,4 +450,100 @@ const assembleUnsafe = (input: AssembleInput): string => {
           : store.spans[Number(span)],
   );
   return resolved + renderReferences(input.links, store.cited, input.referencesHeading);
+};
+
+
+// ---- 빈칸 채우기 결과 정리: 조립과 같은 무력화를 거친 뒤 문단만 남긴다 ----
+
+// 모델이 쓴 모든 {{…}} (빈칸 채우기 결과에는 어떤 자리표시자도 넣지 않는다)
+const ANY_PLACEHOLDER = /\{\{[^{}\n]*\}\}/g;
+const FENCE_OPEN = /^(`{3,}|~{3,})/;
+const FENCE_CLOSE = /^(`{3,}|~{3,})[ \t]*$/;
+// 제목, setext 밑줄, 구분선, 표 정렬 줄, 지시문(:::)
+const DROPPED_LINE = [
+  /^#{1,6}(?=[ \t]|$)/,
+  /^(?:=+|:?-+:?)[ \t]*$/,
+  /^(?:[-*_][ \t]*){3,}$/,
+  /^:{3,}/,
+];
+// 줄머리의 인용 표시, 글머리 기호, 들여쓰기 (번호 목록 표시는 뒤에서 글자로 남긴다)
+const LEADING_CONTAINER = /^(?:[ \t]*(?:>|[-*+](?=[ \t]|$)))*[ \t]*/;
+
+// 코드 블록(울타리와 내용, 닫히지 않으면 끝까지)과 블록 요소 줄을 지운다. 줄머리는 이미 납작하다.
+const dropBlockLines = (text: string): string => {
+  const kept: string[] = [];
+  let fence: string | null = null;
+  for (const line of text.split('\n')) {
+    if (fence !== null) {
+      const close = FENCE_CLOSE.exec(line)?.[1];
+      if (close && close[0] === fence[0] && close.length >= fence.length) fence = null;
+      continue;
+    }
+    const open = FENCE_OPEN.exec(line)?.[1];
+    if (open) {
+      fence = open;
+      continue;
+    }
+    if (DROPPED_LINE.some((pattern) => pattern.test(line))) continue;
+    kept.push(line);
+  }
+  return kept.join('\n');
+};
+
+// 근거 있는 인라인 코드 조각 표지
+const SPAN_MARKER = new RegExp(`${SPAN_OPEN}(\\d+)${SPAN_CLOSE}`, 'g');
+
+// 문단(과 빈 줄)만 있고, 안에 코드·HTML·링크·이미지가 없는가
+const isParagraphsOnly = (text: string): boolean => {
+  if (/^(?:```|~~~|:::)/m.test(text)) return false;
+  try {
+    const tokens = new Lexer({ gfm: true }).lex(text.replace(SPAN_MARKER, '`span`'));
+    return (
+      tokens.every((token) => token.type === 'paragraph' || token.type === 'space') &&
+      !hasForbiddenToken(tokens)
+    );
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * 빈칸 채우기 모델 출력 → 빈칸 자리에 넣을 Markdown 문단 1~3개
+ * - 조립과 같은 무력화: 모델이 쓴 URL 은 지우고, 링크·이미지·HTML·표를 만드는 문자는 이스케이프한다
+ * - 제목, 코드 블록, 구분선, 지시문 줄은 지우고, 목록·인용·들여쓰기는 문단 글자로 납작하게 만든다
+ * - 인라인 코드는 근거(본문, 저장한 분석, 답)에 있는 것만 코드로 남긴다
+ * - 남는 글이 없거나 문단 밖의 요소가 남으면 invalid_result
+ * @param evidence 인라인 코드 근거로 인정하는 글
+ */
+export const sanitizeFill = (markdown: string, evidence: string): string => {
+  try {
+    return sanitizeFillUnsafe(markdown, evidence);
+  } catch (error) {
+    throw error instanceof GenerationFailure ? error : new GenerationFailure('invalid_result');
+  }
+};
+
+const sanitizeFillUnsafe = (markdown: string, evidence: string): string => {
+  const store: Store = { blocks: [], links: [], spans: [], cited: new Set() };
+  const flat = markdown
+    .replace(/\r\n?/g, '\n')
+    .replace(MARKER_CHARS, '')
+    .replace(ANY_PLACEHOLDER, ' ')
+    .split('\n')
+    .map((line) => line.replace(LEADING_CONTAINER, ''))
+    .join('\n');
+  const withSpans = protectSpans(dropBlockLines(flat), evidence, store);
+  const escaped = escapeProse(stripUrls(withSpans))
+    .split('\n')
+    // 줄머리 공백은 위에서 지웠으므로 남은 컨테이너는 번호 목록 표시뿐이다. 점·괄호를 이스케이프해 글자로 둔다.
+    .map((line) => line.replace(/^(\d{1,9})([.)])/, '$1\\$2').replace(new RegExp(QUOTE_MARK, 'g'), '\\>'))
+    .join('\n');
+  const paragraphs = tidy(escaped)
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .filter((paragraph) => paragraph !== '')
+    .slice(0, MAX_FILL_PARAGRAPHS);
+  const text = paragraphs.join('\n\n');
+  if (text === '' || !isParagraphsOnly(text)) fail();
+  return text.replace(SPAN_MARKER, (_whole, span: string) => store.spans[Number(span)]);
 };

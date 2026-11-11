@@ -1,9 +1,14 @@
 import type {
   GenerationErrorCode,
+  GenerationJobKind,
   GenerationStatus,
   GenerationStep,
 } from './contract.ts';
 import type { Database } from './db.ts';
+import {
+  parseStoredAnalysis,
+  type StoredAnalysis,
+} from './generation/stored-analysis.ts';
 import {
   getJobUsage,
   getQuotaWeek,
@@ -20,8 +25,22 @@ import {
 // 작성 프롬프트와 결과 글의 언어 (draft_prompt.locale, DB 제약으로 두 값만 저장됨)
 export type JobLocale = 'ko' | 'en';
 
-// 작업에 필요한 값 (요청 문구, 기본 옵션, 언어, 커밋 SHA, 저장소)
+// 빈칸 채우기 작업의 대상 빈칸 (Next.js 가 요청 시점에 저장한 값)
+export interface JobBlank {
+  id: string;
+  // 빈칸 질문 (hint, 비었으면 종류의 기본 질문)
+  question: string;
+  // 글쓴이 답
+  answer: string;
+  // 지금 본문 Markdown (대상 빈칸 자리는 {{target}} 표시, 목록·인용 안이면 줄 앞에 `- `·`> ` 가 붙음.
+  // 다른 빈칸은 [빈칸: 질문] 한 줄)
+  context: string;
+}
+
+// 작업에 필요한 값 (종류, 요청 문구, 기본 옵션, 언어, 커밋 SHA, 저장소, 빈칸 채우기 대상)
 export interface JobContext {
+  kind: GenerationJobKind;
+  // 빈칸 채우기 작업이면 글쓴이 답
   prompt: string;
   tone: string;
   postType: string;
@@ -33,6 +52,8 @@ export interface JobContext {
   commitShas: string[];
   owner: string;
   repo: string;
+  // kind 가 'fill' 이고 빈칸 값이 모두 있을 때만
+  blank?: JobBlank;
 }
 
 export interface JobStore {
@@ -49,6 +70,10 @@ export interface JobStore {
   reserveQuota: (jobId: string, estimate: number) => Promise<QuotaReservation>;
   // 사용한 토큰을 누적 (0 이하는 무시)
   addUsage: (jobId: string, tokens: number) => Promise<void>;
+  // 초안 작성 작업의 분석 결과 저장 (running 인 작업만)
+  saveAnalysis: (jobId: string, analysis: StoredAnalysis) => Promise<void>;
+  // 이 작업과 같은 초안의 가장 최근 완료된 초안 작성 작업이 저장한 분석 (없거나 저장하지 않았으면 null)
+  loadLatestAnalysis: (jobId: string) => Promise<StoredAnalysis | null>;
 }
 
 // reserved: 시작 가능, exceeded: 남은 양 초과, no_plan: 사용자 등급의 정책 행 없음
@@ -88,6 +113,38 @@ const toUrlList = (value: unknown): string[] => {
     : [];
 };
 
+// loadContext 조회 행 (빈칸 값은 빈칸 채우기 작업에만 있음)
+interface ContextRow extends Omit<JobContext, 'kind' | 'blank'> {
+  kind: string;
+  blankId: string | null;
+  blankQuestion: string | null;
+  blankAnswer: string | null;
+  blankContext: string | null;
+}
+
+// 빈칸 채우기 대상 (id 나 본문이 없으면 다룰 수 없으므로 undefined, 답이 비면 prompt 의 답을 씀)
+const toBlank = (row: ContextRow): JobBlank | undefined =>
+  row.blankId && row.blankContext
+    ? {
+        id: row.blankId,
+        question: row.blankQuestion ?? '',
+        answer: row.blankAnswer ?? row.prompt,
+        context: row.blankContext,
+      }
+    : undefined;
+
+const toContext = (row: ContextRow): JobContext => {
+  const { blankId, blankQuestion, blankAnswer, blankContext, ...rest } = row;
+  const kind: GenerationJobKind = row.kind === 'fill' ? 'fill' : 'draft';
+
+  return {
+    ...rest,
+    kind,
+    referenceUrls: toUrlList(row.referenceUrls),
+    ...(kind === 'fill' ? { blank: toBlank(row) } : {}),
+  };
+};
+
 export const createJobStore = (sql: Database): JobStore => ({
   markRunning: async (jobId) => {
     const [row] = await sql<{ channel: string }[]>`
@@ -101,10 +158,12 @@ export const createJobStore = (sql: Database): JobStore => ({
   },
 
   loadContext: async (jobId) => {
-    const [row] = await sql<JobContext[]>`
-      select p.prompt, p.tone, p.post_type as "postType", p.length,
+    const [row] = await sql<ContextRow[]>`
+      select p.kind, p.prompt, p.tone, p.post_type as "postType", p.length,
         p.required_blocks as "requiredBlocks", p.locale, p.commit_shas as "commitShas",
         p.reference_urls as "referenceUrls",
+        p.blank_id as "blankId", p.blank_question as "blankQuestion",
+        p.blank_answer as "blankAnswer", p.blank_context as "blankContext",
         r.owner_login as owner, r.name as repo
       from comdraft.draft_prompt p
       join comdraft.draft d on d.id = p.draft_id
@@ -113,7 +172,7 @@ export const createJobStore = (sql: Database): JobStore => ({
       limit 1
     `;
 
-    return row ? { ...row, referenceUrls: toUrlList(row.referenceUrls) } : null;
+    return row ? toContext(row) : null;
   },
 
   markStep: async (jobId, step) => {
@@ -231,5 +290,30 @@ export const createJobStore = (sql: Database): JobStore => ({
       set used_tokens = used_tokens + ${tokens}
       where id = ${jobId}
     `;
+  },
+
+  saveAnalysis: async (jobId, analysis) => {
+    await sql`
+      update comdraft.draft_prompt
+      set analysis = ${sql.json(analysis)}
+      where id = ${jobId} and status = 'running'
+    `;
+  },
+
+  loadLatestAnalysis: async (jobId) => {
+    // 가장 최근 완료 작업이 분석을 저장하지 않았으면(배포 전 작업 등) 더 오래된 작업으로 내려가지 않는다
+    // → 지금 본문과 맞지 않는 옛 분석을 쓰지 않기 위해서다
+    const [row] = await sql<{ analysis: unknown }[]>`
+      select d.analysis
+      from comdraft.draft_prompt p
+      join comdraft.draft_prompt d on d.draft_id = p.draft_id
+      where p.id = ${jobId}
+        and d.kind = 'draft'
+        and d.status = 'completed'
+      order by d.created_at desc
+      limit 1
+    `;
+
+    return row ? parseStoredAnalysis(row.analysis) : null;
   },
 });
