@@ -1,4 +1,4 @@
-import { MAX_CODE_LINES } from './limits.ts';
+import { CODE_LIMIT, MAX_CODE_LINES } from './limits.ts';
 import type { PreparedHunk } from './prepare.ts';
 import {
   BLANK_KINDS,
@@ -92,11 +92,14 @@ export const validatePlan = (
   ctx: { hunkIds: Set<string>; linkIds: Set<string>; length: string },
 ): Plan => {
   const [, max] = sectionRange(ctx.length);
+  const kept = plan.sections.slice(0, max);
+  // 첫 절은 글 제목(h1) 바로 아래라 h2 여야 한다. 더 깊으면 모든 절을 같은 만큼 올려 상대 구조를 지킨다.
+  const shift = Math.max(0, (kept[0]?.level ?? MIN_LEVEL) - MIN_LEVEL);
   let previousLevel = 0;
-  const sections = plan.sections.slice(0, max).map((section) => {
+  const sections = kept.map((section) => {
     const upper =
-      previousLevel === 0 ? MAX_LEVEL : Math.min(MAX_LEVEL, previousLevel + 1);
-    const level = clamp(section.level, MIN_LEVEL, upper);
+      previousLevel === 0 ? MIN_LEVEL : Math.min(MAX_LEVEL, previousLevel + 1);
+    const level = clamp(section.level - shift, MIN_LEVEL, upper);
     previousLevel = level;
     return {
       ...section,
@@ -180,6 +183,10 @@ const dropOverlappingPicks = (picks: CodePick[]): CodePick[] => {
   return kept;
 };
 
+// 길이별 코드 조각 상한 (짧은 글에 코드가 본문보다 많아지지 않게, 앞에서부터 남긴다)
+const keepCodeLimit = (picks: CodePick[], length: string): CodePick[] =>
+  picks.slice(0, CODE_LIMIT[length as keyof typeof CODE_LIMIT] ?? CODE_LIMIT.medium);
+
 const maxUnknownNumber = (unknowns: RawAnalysis['unknowns']): number =>
   unknowns.reduce((max, u) => {
     const match = /^U(\d+)$/.exec(u.id);
@@ -215,10 +222,13 @@ export const validateAnalysis = (
     }))
     .filter((fact) => fact.evidence.length > 0);
 
-  const code = dropOverlappingPicks(
-    analysis.code
-      .filter((pick) => inRange(pick.section) && isValidCodePick(pick, ctx.hunks))
-      .map((pick) => closeOpenBlock(pick, ctx.hunks)),
+  const code = keepCodeLimit(
+    dropOverlappingPicks(
+      analysis.code
+        .filter((pick) => inRange(pick.section) && isValidCodePick(pick, ctx.hunks))
+        .map((pick) => closeOpenBlock(pick, ctx.hunks)),
+    ),
+    ctx.length,
   ).map((pick) => ({ ...pick, mode: toCodeMode(pick.mode) }));
 
   const unknowns = analysis.unknowns

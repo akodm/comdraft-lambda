@@ -128,7 +128,18 @@ describe('validatePlan', () => {
       length: 'long',
     });
     assert.equal(few.sections.length, 1);
-    assert.equal(few.sections[0].level, 6);
+    // 글 제목(h1) 바로 아래 첫 절은 언제나 h2 다 (h1 에서 h4·h6 로 건너뛰지 않게)
+    assert.equal(few.sections[0].level, 2);
+  });
+
+  it('첫 절이 h2 보다 깊으면 모든 절을 같은 만큼 올려 상대 구조를 지킨다', () => {
+    // 실제 비교 실행: 필수 블록 h4 를 고르자 기획이 모든 절을 h4 로 잡아 h1 다음에 바로 h4 가 나왔다
+    const deep = validatePlan(plan([section(4), section(4), section(5)]), {
+      hunkIds: new Set(),
+      linkIds: new Set(),
+      length: 'medium',
+    });
+    assert.deepEqual(deep.sections.map((s) => s.level), [2, 2, 3]);
   });
 });
 
@@ -178,6 +189,18 @@ describe('validateAnalysis', () => {
       ctxFor(p, [hunk('C1.F1.H1', 5), hunk('C1.F1.H2', 5, true), hunk('C1.F1.H3', 60)]),
     );
     assert.deepEqual(out.code.map((c) => c.id), ['S1', 'S7']);
+  });
+
+  it('코드 조각은 길이별 상한(짧게 2, 보통 3, 길게 4)까지만 앞에서부터 남긴다', () => {
+    // 실제 비교 실행: 짧게(약 1,000자) 글에 코드 블록이 5개 들어갔다
+    const picks = Array.from({ length: 6 }, (_, i) => ({
+      id: `S${i + 1}`, section: 0, from: `C1.F1.H${i + 1}`, startLine: 1, endLine: 1, mode: 'after' as const, point: 'p',
+    }));
+    const hunks = picks.map((pick) => hunk(pick.from, 3));
+    for (const [length, count] of [['short', 2], ['medium', 3], ['long', 4], ['x', 3]] as const) {
+      const out = validateAnalysis({ ...empty, code: picks }, { ...ctxFor(p, hunks), length });
+      assert.deepEqual(out.code.map((c) => c.id), picks.slice(0, count).map((c) => c.id), length);
+    }
   });
 
   it('블록 중간에서 끝나는 코드 조각은 괄호가 닫힐 때까지 늘린다 (40줄과 hunk 끝을 넘지 않음)', () => {

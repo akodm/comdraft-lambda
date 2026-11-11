@@ -30,6 +30,8 @@ export const ESTIMATE_FILL_OUTPUT = 1_500;
 export const MAX_FILL_PARAGRAPHS = 3;
 // 초안에 삽입하는 코드 블록 최대 줄 수
 export const MAX_CODE_LINES = 40;
+// 글 길이별 코드 조각 최대 개수 (분석 결과에서 앞에서부터 남긴다, 프롬프트 안내와 검증이 함께 쓴다)
+export const CODE_LIMIT: Readonly<Record<Length, number>> = { short: 2, medium: 3, long: 4 };
 
 // 토큰 수 추정: ASCII 3자당 1, 비ASCII 1자당 1 (새 토크나이저 기준으로 보수적)
 export const estimateTokens = (text: string): number => {
