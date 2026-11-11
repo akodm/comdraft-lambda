@@ -104,12 +104,17 @@ const fakeLlm = (
   plan: Plan,
   analysis: Analysis,
   markdown: string,
-  extra: { review?: Reply<unknown>; revised?: Reply<string> } = {},
+  // retried: 고쳐 쓴 초안이 거절됐을 때 다시 고쳐 쓴 결과 (없으면 revised 와 같음)
+  extra: { review?: Reply<unknown>; revised?: Reply<string>; retried?: Reply<string> } = {},
 ) => {
   const parses: ParseCall[] = [];
   const writes: ParseCall[] = [];
   const parseReplies: Reply<unknown>[] = [plan, analysis, extra.review ?? NO_ISSUES];
-  const writeReplies: Reply<string>[] = [markdown, extra.revised ?? markdown];
+  const writeReplies: Reply<string>[] = [
+    markdown,
+    extra.revised ?? markdown,
+    extra.retried ?? extra.revised ?? markdown,
+  ];
   let parseIndex = 0;
   let writeIndex = 0;
   const llm: LlmClient = {
@@ -460,6 +465,63 @@ describe('createClaudePipeline', () => {
       assert.equal((rejectedResult.errors[0] as GenerationFailure).code, 'invalid_result');
     });
 
+    it('고쳐 쓴 초안이 거절되면 이유를 알려 주고 한 번만 다시 고쳐 쓴다', async () => {
+      // 실제 비교 실행: 검토 지적을 따르다 빈칸을 지워 고쳐 쓰기 전체가 버려졌다
+      const dropsBlank = REVISED.replace('{{ask:U1}}', '');
+      const recovered = fakeLlm(PLAN, ANALYSIS, MARKDOWN, {
+        review: { issues: [ISSUE] },
+        revised: dropsBlank,
+        retried: REVISED,
+      });
+      const recoveredResult = await run(recovered.llm);
+      assert.equal(recovered.writes.length, 3);
+      assert.ok(!recovered.writes[1].user.includes('앞선 고쳐 쓰기를 쓰지 못한 이유'));
+      assert.ok(recovered.writes[2].user.includes('앞선 고쳐 쓰기를 쓰지 못한 이유'));
+      assert.ok(recovered.writes[2].user.includes('{{ask:U1}}'));
+      assert.ok(recoveredResult.markdown.includes('이미지를 늦게 불러오도록 바꿨다'));
+      assert.equal(recoveredResult.errors.length, 1);
+
+      // 다시 고쳐 써도 거절되면 원래 초안 (더 시도하지 않음)
+      const stillBad = fakeLlm(PLAN, ANALYSIS, MARKDOWN, {
+        review: { issues: [ISSUE] },
+        revised: dropsBlank,
+        retried: dropsBlank,
+      });
+      const stillBadResult = await run(stillBad.llm);
+      assert.equal(stillBad.writes.length, 3);
+      assert.ok(stillBadResult.markdown.includes('지연 로딩을 넣었다'));
+      assert.equal(stillBadResult.errors.length, 2);
+    });
+
+    it('다시 고쳐 쓸 시간이 90초보다 적게 남았으면 다시 고쳐 쓰지 않는다', async () => {
+      const { llm, writes } = fakeLlm(PLAN, ANALYSIS, MARKDOWN, {
+        review: { issues: [ISSUE] },
+        revised: REVISED.replace('{{ask:U1}}', ''),
+        retried: REVISED,
+      });
+      // 고쳐 쓰기 전까지는 넉넉하고, 첫 고쳐 쓰기를 마친 뒤에는 89.999초만 남는다
+      let left = 300_000;
+      const pipeline = createClaudePipeline({
+        llm: {
+          ...llm,
+          write: async (req) => {
+            const result = await llm.write(req);
+            if (writes.length === 2) left = 89_999;
+            return result;
+          },
+        },
+        fetchLinks: async () => LINKS,
+        remainingTimeMs: () => left,
+      });
+      const input: PipelineInput = { context: CONTEXT, commits: COMMITS, onUsage: async () => {} };
+      const prepared = await pipeline.prepare(input);
+      const analyzed = await pipeline.analyze(input, await pipeline.classify(input, prepared));
+      const markdown = await pipeline.review(input, await pipeline.write(input, analyzed));
+
+      assert.equal(writes.length, 2);
+      assert.ok(markdown.includes('지연 로딩을 넣었다'));
+    });
+
     it('reportError 가 없어도 검토 실패는 조용히 넘어간다', async () => {
       const { llm } = fakeLlm(PLAN, ANALYSIS, MARKDOWN, { review: new GenerationFailure('internal') });
       const pipeline = createClaudePipeline({
@@ -517,7 +579,7 @@ describe('createClaudePipeline', () => {
     });
 
     it('고쳐 쓴 초안이 조립에서 막히면 원래 초안을 조립하고 reportError 를 부른다', async () => {
-      // 고쳐 쓴 초안은 acceptRevision 은 통과하지만 본문이 없어 조립이 invalid_result 로 던진다
+      // 고쳐 쓴 초안은 자리표시자·제목 검사(checkRevision)는 통과하지만 본문이 없어 조립이 invalid_result 로 던진다
       const original = '# 지연 로딩\n\n지연 로딩을 넣었다';
       const { llm } = fakeLlm(PLAN, ANALYSIS, original, {
         review: { issues: [ISSUE] },

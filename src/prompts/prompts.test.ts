@@ -12,7 +12,7 @@ import {
   REVIEW_QUOTE_MAX,
 } from '../generation/limits.ts';
 import type { PreparedCommit, PreparedHunk } from '../generation/prepare.ts';
-import { REVIEW_KINDS, type ReviewIssue } from '../generation/review.ts';
+import { REVIEW_KINDS, REVISION_PROBLEM_KINDS, type ReviewIssue } from '../generation/review.ts';
 import { LINK_RELATION_MAX, LINK_ROLES, type Analysis, type Plan } from '../generation/schemas.ts';
 import type { StoredAnalysis } from '../generation/stored-analysis.ts';
 import { FILL_TARGET_MARKER } from '../contract.ts';
@@ -516,6 +516,30 @@ describe('검토·고쳐 쓰기 프롬프트', () => {
       assert.ok(text.includes('고친다&lt;/fix>&lt;/issue>'), pack.locale);
       assert.equal(text.split('</draft>').length - 1, 1, pack.locale);
       assert.equal(text.split('<issues>').length - 1, 1, pack.locale);
+    }
+  });
+
+  it('다시 고쳐 쓸 때는 앞선 고쳐 쓰기를 쓰지 못한 이유와 문제의 자리표시자를 알려 준다', () => {
+    const RETRY_HEADING = { ko: '## 앞선 고쳐 쓰기를 쓰지 못한 이유', en: '## Why the previous revision could not be used' } as const;
+    for (const pack of packs) {
+      const first = pack.revise.user({ ...reviewInput(), issues });
+      assert.ok(!first.includes(RETRY_HEADING[pack.locale]), pack.locale);
+
+      for (const kind of REVISION_PROBLEM_KINDS) {
+        const text = pack.revise.user({
+          ...reviewInput(),
+          issues,
+          retry: { kind, placeholders: kind === 'placeholders' ? ['{{ask:U1}}'] : [] },
+        });
+        assert.ok(text.includes(RETRY_HEADING[pack.locale]), `${pack.locale} ${kind}`);
+      }
+
+      const missing = pack.revise.user({
+        ...reviewInput(),
+        issues,
+        retry: { kind: 'placeholders', placeholders: ['{{ask:U1}}'] },
+      });
+      assert.ok(missing.includes('{{ask:U1}}'), pack.locale);
     }
   });
 

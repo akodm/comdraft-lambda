@@ -17,7 +17,12 @@ import {
   type PreparedCommit,
   type PreparedHunk,
 } from './generation/prepare.ts';
-import { acceptRevision, ReviewSchema, validateReview } from './generation/review.ts';
+import {
+  checkRevision,
+  ReviewSchema,
+  validateReview,
+  type RevisionProblem,
+} from './generation/review.ts';
 import {
   AnalysisSchema,
   PlanSchema,
@@ -33,6 +38,7 @@ import { renderCatalog, resolveOptions } from './prompts/render.ts';
  * 준비 → (예상량 검사) → 구분 → 분석 → 작성 → 검토 단계
  * - 각 단계는 앞 단계 결과를 받아 메모리에서만 넘기고, 마지막 검토 단계가 조립한 결과(Markdown)만 저장됨
  * - 검토는 독자 기준으로 초안을 점검하고, 문제가 있을 때만 고쳐 써서 조립 (어느 단계든 실패하면 원래 초안을 씀)
+ * - 고쳐 쓴 초안이 자리표시자·제목 검사에서 거절되면 그 이유를 알려 주고 한 번만 다시 고쳐 씀
  * - createClaudePipeline 이 실제 구현이고, 임시 구현은 placeholder-pipeline.ts 에 있음
  */
 
@@ -96,6 +102,8 @@ const PLAN_STAGE = { effort: 'low', maxTokens: 8_000 } as const;
 // 결과 없이 끊기는 일이 있어(2fdbd57 커밋 실측: 생각 14,000~16,000토큰) low 로 둔다 (low 실측 13초, 출력 약 3,000토큰)
 const ANALYZE_STAGE = { effort: 'low', maxTokens: 16_000 } as const;
 const REVIEW_STAGE = { effort: 'low', maxTokens: 4_000 } as const;
+// 고쳐 쓰기 최대 횟수 (처음 한 번 + 검사에서 거절되면 이유를 알려 주고 한 번 더)
+const REVISE_ATTEMPTS = 2;
 const WORK_STAGE = { effort: 'medium', maxTokens: 16_000 } as const;
 
 // 링크는 글의 보조 근거라 가져오기에 실패해도 작업을 멈추지 않는다
@@ -254,29 +262,36 @@ export const createClaudePipeline = ({
         });
         const issues = validateReview(raw, draft);
 
-        if (issues.length > 0 && remainingTimeMs() >= REVISE_MIN_REMAINING_MS) {
+        const linkIds = new Set(links.map((link) => link.id));
+        // 고쳐 쓴 초안이 검사에서 거절되면 그 이유를 알려 주고 한 번만 다시 고쳐 쓴다 (시간이 남을 때만)
+        let retry: RevisionProblem | undefined;
+
+        for (
+          let attempt = 0;
+          issues.length > 0 && attempt < REVISE_ATTEMPTS && remainingTimeMs() >= REVISE_MIN_REMAINING_MS;
+          attempt += 1
+        ) {
           const revised = await llm.write({
             system: pack.revise.system,
-            user: pack.revise.user({ ...base, issues }),
+            user: pack.revise.user({ ...base, issues, retry }),
             onUsage,
             ...WORK_STAGE,
           });
-          const accepted = acceptRevision(
-            draft,
-            revised,
-            new Set(links.map((link) => link.id)),
-          );
+          const check = checkRevision(draft, revised, linkIds);
 
-          if (accepted) {
-            // 고쳐 쓴 초안이 조립에서 막히면 원래 초안으로 되돌린다
-            try {
-              assembled = assemble({ ...assembleInput, markdown: accepted });
-            } catch (error) {
-              reportError?.(error);
-            }
-          } else {
+          if ('problem' in check) {
             reportError?.(new GenerationFailure('invalid_result'));
+            retry = check.problem;
+            continue;
           }
+
+          // 고쳐 쓴 초안이 조립에서 막히면 원래 초안으로 되돌린다 (다시 고쳐 쓰지 않음)
+          try {
+            assembled = assemble({ ...assembleInput, markdown: check.markdown });
+          } catch (error) {
+            reportError?.(error);
+          }
+          break;
         }
       }
     } catch (error) {

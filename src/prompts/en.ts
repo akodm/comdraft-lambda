@@ -1,7 +1,7 @@
 import { FILL_TARGET_MARKER } from '../contract.ts';
 import type { JobContext } from '../jobs.ts';
 import { MAX_REVIEW_ISSUES, REVIEW_FIX_MAX, REVIEW_QUOTE_MAX } from '../generation/limits.ts';
-import type { ReviewKind } from '../generation/review.ts';
+import type { ReviewKind, RevisionProblem, RevisionProblemKind } from '../generation/review.ts';
 import { BLANK_LIMIT, LINK_RELATION_MAX, SECTION_RANGE, type LinkRole } from '../generation/schemas.ts';
 import {
   fileNames,
@@ -489,6 +489,19 @@ const fillOptionLines = (context: JobContext): string => {
 - Tone (${options.tone}): ${tone[options.tone]}`;
 };
 
+// Why the previous revision was discarded, sent when revising again (the system compared it with the draft)
+const retryReason: Record<RevisionProblemKind, string> = {
+  empty: 'The revised draft was empty.',
+  no_title: 'The first line of the revised draft was not `# title`.',
+  placeholders: 'The draft\'s `{{code:…}}` or `{{ask:…}}` placeholders were dropped, added, or changed. Whatever the problems to fix say, keep the blanks and code spots with the same ids, the same number of times, as in the draft.',
+  headings: 'The number or levels of section headings changed from the draft. Keep the section headings with the same number and levels as in the draft.',
+  unknown_link: 'A link id not in `<links>` was used. Use only link ids in `<links>`.',
+};
+
+const retryNote = ({ kind, placeholders }: RevisionProblem): string => `## Why the previous revision could not be used
+The previous revision could not be used because of the problem below. This time, fix only the listed problems without it.
+- ${retryReason[kind]}${placeholders.length ? `\n- Placeholders involved: ${placeholders.join(', ')}` : ''}`;
+
 export const en: PromptPack = {
   locale: 'en',
   dataRuleMarker,
@@ -554,7 +567,7 @@ Review the draft above by the reader rules and list only what needs fixing. If n
 
 ## Problems to fix
 ${renderIssues(input.issues)}
-
+${input.retry ? `\n${retryNote(input.retry)}\n` : ''}
 Write the whole draft in Markdown with only the problems above fixed. The first line is \`# title\`.`,
   },
   fill: {

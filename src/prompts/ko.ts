@@ -1,7 +1,7 @@
 import { FILL_TARGET_MARKER } from '../contract.ts';
 import type { JobContext } from '../jobs.ts';
 import { MAX_REVIEW_ISSUES, REVIEW_FIX_MAX, REVIEW_QUOTE_MAX } from '../generation/limits.ts';
-import type { ReviewKind } from '../generation/review.ts';
+import type { ReviewKind, RevisionProblem, RevisionProblemKind } from '../generation/review.ts';
 import { BLANK_LIMIT, LINK_RELATION_MAX, SECTION_RANGE, type LinkRole } from '../generation/schemas.ts';
 import {
   fileNames,
@@ -487,6 +487,19 @@ const fillOptionLines = (context: JobContext): string => {
 - 문체 (${options.tone}): ${tone[options.tone]}`;
 };
 
+// 다시 고쳐 쓸 때 알려 주는 앞선 고쳐 쓰기의 문제 (시스템이 초안과 맞춰 보고 버린 이유)
+const retryReason: Record<RevisionProblemKind, string> = {
+  empty: '고친 초안이 비어 있었다.',
+  no_title: '고친 초안의 첫 줄이 `# 제목` 이 아니었다.',
+  placeholders: '초안의 `{{code:…}}`·`{{ask:…}}` 자리표시자가 빠지거나 늘거나 바뀌었다. 빈칸과 코드 자리는 고칠 점이 무엇을 말하든 초안과 같은 번호를 같은 횟수로 남긴다.',
+  headings: '절 제목의 수와 수준이 초안과 달라졌다. 절 제목은 초안과 같은 수와 수준으로 남긴다.',
+  unknown_link: '`<links>` 에 없는 링크 번호를 썼다. 링크는 `<links>` 에 있는 번호만 쓴다.',
+};
+
+const retryNote = ({ kind, placeholders }: RevisionProblem): string => `## 앞선 고쳐 쓰기를 쓰지 못한 이유
+앞서 고친 초안은 아래 문제로 쓰지 못했다. 이번에는 이 문제 없이 고칠 점만 고친다.
+- ${retryReason[kind]}${placeholders.length ? `\n- 문제의 자리표시자: ${placeholders.join(', ')}` : ''}`;
+
 export const ko: PromptPack = {
   locale: 'ko',
   dataRuleMarker,
@@ -552,7 +565,7 @@ ${links.length ? renderLinkTitles(links, plan.linkRoles) : NONE}
 
 ## 고칠 점
 ${renderIssues(input.issues)}
-
+${input.retry ? `\n${retryNote(input.retry)}\n` : ''}
 위 고칠 점만 고친 초안 전체를 Markdown 으로 써 주세요. 첫 줄은 \`# 제목\` 입니다.`,
   },
   fill: {

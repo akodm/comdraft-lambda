@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { acceptRevision, validateReview } from './review.ts';
+import { checkRevision, validateReview } from './review.ts';
+
+// 받아들인 본문, 거절이면 null
+const acceptRevision = (draft: string, revised: string, linkIds: Set<string>): string | null => {
+  const check = checkRevision(draft, revised, linkIds);
+  return 'markdown' in check ? check.markdown : null;
+};
 
 const DRAFT =
   '# 제목\n\n## 설정\n\n`createSafeLookup` 을 추가했다.\n공식   문서대로\n설정했다.\n\n{{code:S1}}\n\n{{ask:U1}}';
@@ -93,5 +99,30 @@ describe('acceptRevision', () => {
   it('안쪽 공백이 있는 자리표시자도 같은 것으로 센다', () => {
     const revised = DRAFT.replace('{{code:S1}}', '{{ code : S1 }}');
     assert.equal(acceptRevision(DRAFT, revised, links), revised);
+  });
+});
+
+describe('checkRevision', () => {
+  const links = new Set(['L1']);
+  it('받아들이면 본문을, 거절하면 다시 고쳐 쓸 때 알려 줄 이유와 자리표시자를 돌려준다', () => {
+    assert.deepEqual(checkRevision(DRAFT, DRAFT, links), { markdown: DRAFT });
+    assert.deepEqual(checkRevision(DRAFT, '  ', links), { problem: { kind: 'empty', placeholders: [] } });
+    assert.deepEqual(checkRevision(DRAFT, DRAFT.replace('# 제목\n\n', ''), links), {
+      problem: { kind: 'no_title', placeholders: [] },
+    });
+    // 실제 비교 실행에서 검토 지적을 따르다 빈칸을 지운 경우
+    assert.deepEqual(checkRevision(DRAFT, DRAFT.replace('{{ask:U1}}', ''), links), {
+      problem: { kind: 'placeholders', placeholders: ['{{ask:U1}}'] },
+    });
+    // 빠진 것과 새로 생긴 것을 모두 알려 준다
+    assert.deepEqual(checkRevision(DRAFT, DRAFT.replace('{{code:S1}}', '{{code:S2}}'), links), {
+      problem: { kind: 'placeholders', placeholders: ['{{code:S1}}', '{{code:S2}}'] },
+    });
+    assert.deepEqual(checkRevision(DRAFT, DRAFT.replace('## 설정\n\n', ''), links), {
+      problem: { kind: 'headings', placeholders: [] },
+    });
+    assert.deepEqual(checkRevision(DRAFT, `${DRAFT} {{link:L9}}`, links), {
+      problem: { kind: 'unknown_link', placeholders: ['{{link:L9}}'] },
+    });
   });
 });

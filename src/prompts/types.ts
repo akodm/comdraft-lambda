@@ -1,7 +1,7 @@
 import type { JobBlank, JobContext, JobLocale } from '../jobs.ts';
 import type { PreparedLink } from '../generation/links.ts';
 import type { PreparedCommit, PreparedHunk } from '../generation/prepare.ts';
-import type { ReviewIssue } from '../generation/review.ts';
+import type { ReviewIssue, RevisionProblem } from '../generation/review.ts';
 import type { Analysis, BlankKind, Plan } from '../generation/schemas.ts';
 import type { StoredAnalysis } from '../generation/stored-analysis.ts';
 
@@ -58,6 +58,8 @@ export interface ReviewPromptInput extends WritePromptInput {
 // 고쳐 쓰기: 검토 입력과 검증을 통과한 문제 목록
 export interface RevisePromptInput extends ReviewPromptInput {
   issues: ReviewIssue[];
+  // 다시 고쳐 쓸 때: 앞선 고쳐 쓰기를 쓰지 못한 이유 (처음 고쳐 쓸 때는 없음)
+  retry?: RevisionProblem;
 }
 
 // 빈칸 채우기: 지금 본문(대상 자리 {{target}}), 첫 작성 때 저장한 분석(없을 수 있음), 질문과 답

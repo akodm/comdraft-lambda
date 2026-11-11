@@ -69,14 +69,43 @@ const headingLevels = (text: string): number[] =>
 const sameLevels = (a: number[], b: number[]): boolean =>
   a.length === b.length && a.every((level, i) => level === b[i]);
 
-// 고쳐 쓴 초안이 안전하면 (바깥 펜스를 푼) 본문을, 아니면 null 을 돌려준다
-export const acceptRevision = (draft: string, revised: string, linkIds: Set<string>): string | null => {
+// 고쳐 쓴 초안을 거절한 이유 (다시 고쳐 쓸 때 모델에게 알려 준다)
+// placeholders: 횟수가 달라진 code·ask 자리표시자, 또는 입력에 없는 link 자리표시자 ({{kind:ID}} 모양, 정렬)
+export const REVISION_PROBLEM_KINDS = ['empty', 'no_title', 'placeholders', 'headings', 'unknown_link'] as const;
+export type RevisionProblemKind = (typeof REVISION_PROBLEM_KINDS)[number];
+
+export interface RevisionProblem {
+  kind: RevisionProblemKind;
+  placeholders: string[];
+}
+
+export type RevisionCheck = { markdown: string } | { problem: RevisionProblem };
+
+const toPlaceholder = (key: string): string => `{{${key}}}`;
+
+const problem = (kind: RevisionProblemKind, keys: string[] = []): RevisionCheck => ({
+  problem: { kind, placeholders: keys.map(toPlaceholder).sort() },
+});
+
+// 고쳐 쓴 초안이 안전하면 (바깥 펜스를 푼) 본문을, 아니면 거절 이유를 돌려준다
+export const checkRevision = (draft: string, revised: string, linkIds: Set<string>): RevisionCheck => {
   const text = unwrapOuterFence(revised);
-  if (!text.trim() || !text.trimStart().startsWith('# ')) return null;
-  if (!sameCounts(countPlaceholders(draft, ['code', 'ask']), countPlaceholders(text, ['code', 'ask']))) return null;
-  if (!sameLevels(headingLevels(draft), headingLevels(text))) return null;
-  for (const key of countPlaceholders(text, ['link']).keys()) {
-    if (!linkIds.has(key.slice('link:'.length))) return null;
+  if (!text.trim()) return problem('empty');
+  if (!text.trimStart().startsWith('# ')) return problem('no_title');
+
+  const before = countPlaceholders(draft, ['code', 'ask']);
+  const after = countPlaceholders(text, ['code', 'ask']);
+  if (!sameCounts(before, after)) {
+    const keys = new Set([...before.keys(), ...after.keys()]);
+    return problem('placeholders', [...keys].filter((key) => before.get(key) !== after.get(key)));
   }
-  return text;
+
+  if (!sameLevels(headingLevels(draft), headingLevels(text))) return problem('headings');
+
+  const unknown = [...countPlaceholders(text, ['link']).keys()].filter(
+    (key) => !linkIds.has(key.slice('link:'.length)),
+  );
+  if (unknown.length > 0) return problem('unknown_link', unknown);
+
+  return { markdown: text };
 };
