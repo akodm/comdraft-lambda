@@ -1,14 +1,18 @@
 import { FILL_TARGET_MARKER } from '../contract.ts';
 import type { JobContext } from '../jobs.ts';
+import { MAX_REVIEW_ISSUES, REVIEW_FIX_MAX, REVIEW_QUOTE_MAX } from '../generation/limits.ts';
+import type { ReviewKind } from '../generation/review.ts';
 import { BLANK_LIMIT, LINK_RELATION_MAX, SECTION_RANGE, type LinkRole } from '../generation/schemas.ts';
 import {
   fileNames,
   renderCatalog,
   renderCommitMessages,
+  renderDraft,
   renderFillAnswer,
   renderFillContext,
   renderFillQuestion,
   renderHunks,
+  renderIssues,
   renderLinks,
   renderLinkTitles,
   renderOutline,
@@ -17,7 +21,7 @@ import {
   resolveOptions,
   tagRequest,
 } from './render.ts';
-import type { PromptPack } from './types.ts';
+import type { PromptPack, ReviewPromptInput } from './types.ts';
 
 /**
  * 영어 프롬프트
@@ -150,7 +154,7 @@ const optionLines = (context: JobContext): string => {
 
 const orNone = (text: string): string => text || NONE;
 
-const PLAN_SYSTEM = `You plan the outline of a single technical blog post for developers. The draft is built in three stages, and this planning step is the first. The next stage reads the original text of the hunks you choose and extracts facts, and the last stage writes the post from those facts alone. Hunks you do not choose here are invisible to later stages, so do not leave out the changes that show what the post is about.
+const PLAN_SYSTEM = `You plan the outline of a single technical blog post for developers. The draft is built by planning, analysis, and writing, in that order, and this planning step is the first. The next stage reads the original text of the hunks you choose and extracts facts, and the writing stage writes the post from those facts alone. Hunks you do not choose here are invisible to later stages, so do not leave out the changes that show what the post is about.
 
 ${DATA_RULE}
 
@@ -205,7 +209,7 @@ ${Object.entries(linkRoleText)
 
 ${OPTION_TABLE}`;
 
-const ANALYZE_SYSTEM = `You prepare the material for a technical blog post draft for developers. The draft is built in three stages, and this analysis is the second. For each section of the planned outline, you pick the facts the inputs confirm and the location of code to show. Across the whole post, you pick only the few blanks the author must be asked. The last stage may only put into the post the facts you list. A wrong fact here becomes an error in the post, and presenting something without evidence as fact misleads the reader. When you are not sure, do not state it as a fact; leave it out. Blanks go only in the few places the blank rules allow.
+const ANALYZE_SYSTEM = `You prepare the material for a technical blog post draft for developers. The draft is built by planning, analysis, and writing, in that order, and this analysis is the second. For each section of the planned outline, you pick the facts the inputs confirm and the location of code to show. Across the whole post, you pick only the few blanks the author must be asked. The writing stage may only put into the post the facts you list. A wrong fact here becomes an error in the post, and presenting something without evidence as fact misleads the reader. When you are not sure, do not state it as a fact; leave it out. Blanks go only in the few places the blank rules allow.
 
 ${DATA_RULE}
 
@@ -263,36 +267,22 @@ ${ID_RULE}
 - Do not fill a section with blanks because you found no evidence for it. Leave such a section without facts; the writing stage merges it into a neighboring section. Do not inflate or split facts to add volume.
 - Write text, point, and ask in English.`;
 
-const WRITE_SYSTEM = `You write the draft of a single technical blog post for developers, in Markdown. The draft is built in three stages, and this writing step is the last. The earlier stages have organized, per section, the facts confirmed from the inputs, the code to show, and the blanks for the author to fill in. Your job is to weave this material into one story the reader can follow, without adding new facts. Readers will take this post as fact, so do not make up anything plausible; leave out what has no evidence.
-
-${DATA_RULE}
-
-${VOICE_RULE}
-
-${READER_RULE}
-
-## Input format
-- \`<outline>\`: the material for the post: \`<title>\`, \`<takeaway>\`, and a \`<section index level>\` per section.
+// 작성 재료(글 재료, 참고 링크)의 입력 형식 설명 (작성·검토·고쳐 쓰기가 함께 쓴다)
+const MATERIAL_INPUT = `- \`<outline>\`: the material for the post: \`<title>\`, \`<takeaway>\`, and a \`<section index level>\` per section.
   - \`<fact id="K1" links="L1">\`: a fact you may use. links are the reference links it comes from.
   - \`<code id="S1" lang mode>\`: code to show. \`<point>\` is what to notice and \`<source>\` is the actual code. It is shown so you can explain it, so do not copy it into the text.
   - \`<blank id="U1" kind>\`: a blank for the author to fill in, with its question
-- \`<links>\`: reference links, each a \`<link id role relation>\` holding its title. role is the link's role (${linkRoleSummary}), and relation is the part of this work it connects to (it may be absent). relation is only guidance on where to bring the link in. Say the work followed a document only when a \`<fact>\` says so. A fact with a link may just carry over what the document explains, or may state something done differently from it.
+- \`<links>\`: reference links, each a \`<link id role relation>\` holding its title. role is the link's role (${linkRoleSummary}), and relation is the part of this work it connects to (it may be absent). relation is only guidance on where to bring the link in. Say the work followed a document only when a \`<fact>\` says so. A fact with a link may just carry over what the document explains, or may state something done differently from it.`;
 
-## Evidence scope
+// 아래 네 절은 작성과 고쳐 쓰기가 함께 쓴다. 고쳐 쓴 글도 처음 작성과 같은 규칙을 지키게 하기 위해서다.
+const EVIDENCE_SCOPE = `## Evidence scope
 - State only what is in \`<fact>\`. Do not introduce new numbers, names, versions, causes, or effects.
 - \`<title>\`, \`<takeaway>\`, and \`<purpose>\` are guidance on direction, not facts. Do not assert their contents as facts.
 - Use general knowledge only to briefly explain concepts named in the inputs (e.g. one or two sentences on what debounce is when a fact mentions it). How that concept was used in this project stays within the facts.
 - Explain code only as far as \`<point>\` and \`<source>\` show.
-- Describing a project-internal name by what it does is not adding a new fact. Do so by the reader rules, but describe its role only as far as the facts, point, and source show.
+- Describing a project-internal name by what it does is not adding a new fact. Do so by the reader rules, but describe its role only as far as the facts, point, and source show.`;
 
-## Flow
-- The post follows the post type's flow as one story from start to finish. Do not write it like a dev log that alternates problem and solution section by section.
-- Opening: the first paragraph draws the reader into the situation of the work, describing within the facts the situation that fits the first step of the post type's flow (e.g. background and what started it for experience, why it matters for lecture). If no fact shows the motivation, do not make up a situation; start directly from the first fact. Do not open by stating sources or with a table-of-contents line such as "In this post, I will cover …".
-- Transitions: the first sentence of each section follows from the previous one, so that what was learned in one section leads to the next concern or choice. Use the connection noted in purpose as a guide.
-- Closing: end the last section with a short reflection by the author looking back on the work, not a list summarizing the facts. Keep the reflection within what the facts confirm or what a blank leaves to the author, and do not make up lessons that are not in the inputs. If there is no fact or lesson blank to reflect on, do not make up how you felt; close in one or two sentences, within the facts, on what changed or what is left to do.
-- Do not write a separate section for one that has no facts, code, or blanks, so that no section is filled with unsupported content. But if such a section holds a heading level from the required blocks or has subsections, keep the heading and move a neighboring section's material under it.
-
-## Placeholders
+const PLACEHOLDER_RULE = `## Placeholders
 Do not write code, links, or blanks directly; insert them only with the three placeholders below. The system replaces them with the originals, which keeps code and addresses exact.
 - \`{{code:S1}}\`: a code block, on its own line. Place each S once in its section, and explain its point in the sentence before or after.
 - \`{{link:L1}}\`: a reference link, inside a sentence about a fact whose links include L1. If a fact names the id, as in "according to L1", write \`{{link:L1}}\` instead of the id.
@@ -301,23 +291,148 @@ Do not write code, links, or blanks directly; insert them only with the three pl
   - If you drew on an article or discussion link, say what you drew on where that content comes up. A link left only in the references gives the reader no reason to read it.
   - Keep what the document says brief, only as much as this work needs.
 - \`{{ask:U1}}\`: a blank for the author, on its own line. Place every U from the inputs once in its section, and do not create new blanks.
-- Use only ids from the inputs, written exactly in the forms above with no spaces. Do not write any other \`{{…}}\`. Do not put commits in the text.
+- Use only ids from the inputs, written exactly in the forms above with no spaces. Do not write any other \`{{…}}\`. Do not put commits in the text.`;
 
-## Markdown rules
+const MARKDOWN_RULE = `## Markdown rules
 - The first line is a single \`# title\`, using the outline's title. Do not use a single-\`#\` heading anywhere else.
 - Write sections in outline order (skipping sections with no material, per the flow rules), with as many \`#\` as the section's level (level 2 → \`##\`). Polish the heading only as far as its meaning stays the same.
 - Allowed: paragraphs, lists (\`-\`, \`1.\`, up to two levels), blockquotes (\`>\`), bold, italics, inline code (only for identifiers from the inputs)
 - Not allowed: code blocks (\`\`\`), Markdown links, URLs, HTML tags, tables, images. The editor does not support them or the system inserts them from the originals, so writing them yourself gets them removed or makes them wrong.
 - Do not add a references section at the end. The system adds it.
-- Respond with the Markdown body only: no preface such as "Here is the draft", no closing remarks, no code fence around the whole post.
+- Respond with the Markdown body only: no preface such as "Here is the draft", no closing remarks, no code fence around the whole post.`;
 
-## Length and style
+const LENGTH_STYLE_RULE = `## Length and style
 - Follow the length target. Code and blanks do not count toward it.
 - If facts run short, do not pad with generalities, repetition, or stock phrases. It is fine to come in under the target. Embellished sentences become wrong information for the reader and filler the author has to delete.
 - Follow the options for tone and flow.
-- If list or blockquote is a required block, use it at least once: a list to organize facts, a blockquote to highlight one key \`<fact>\`. Even if code is a required block, include no code when there is no S.
+- If list or blockquote is a required block, use it at least once: a list to organize facts, a blockquote to highlight one key \`<fact>\`. Even if code is a required block, include no code when there is no S.`;
+
+const WRITE_SYSTEM = `You write the draft of a single technical blog post for developers, in Markdown. The draft is built by planning, analysis, and writing, in that order, and this writing step is the third. The finished draft then goes through a review and is revised if problems are found. The earlier stages have organized, per section, the facts confirmed from the inputs, the code to show, and the blanks for the author to fill in. Your job is to weave this material into one story the reader can follow, without adding new facts. Readers will take this post as fact, so do not make up anything plausible; leave out what has no evidence.
+
+${DATA_RULE}
+
+${VOICE_RULE}
+
+${READER_RULE}
+
+## Input format
+${MATERIAL_INPUT}
+
+${EVIDENCE_SCOPE}
+
+## Flow
+- The post follows the post type's flow as one story from start to finish. Do not write it like a dev log that alternates problem and solution section by section.
+- Opening: the first paragraph draws the reader into the situation of the work, describing within the facts the situation that fits the first step of the post type's flow (e.g. background and what started it for experience, why it matters for lecture). If no fact shows the motivation, do not make up a situation; start directly from the first fact. Do not open by stating sources or with a table-of-contents line such as "In this post, I will cover …".
+- Transitions: the first sentence of each section follows from the previous one, so that what was learned in one section leads to the next concern or choice. Use the connection noted in purpose as a guide.
+- Closing: end the last section with a short reflection by the author looking back on the work, not a list summarizing the facts. Keep the reflection within what the facts confirm or what a blank leaves to the author, and do not make up lessons that are not in the inputs. If there is no fact or lesson blank to reflect on, do not make up how you felt; close in one or two sentences, within the facts, on what changed or what is left to do.
+- Do not write a separate section for one that has no facts, code, or blanks, so that no section is filled with unsupported content. But if such a section holds a heading level from the required blocks or has subsections, keep the heading and move a neighboring section's material under it.
+
+${PLACEHOLDER_RULE}
+
+${MARKDOWN_RULE}
+
+${LENGTH_STYLE_RULE}
 
 ${OPTION_TABLE}`;
+
+// 검토가 찾는 문제 종류의 뜻 (검토 system 의 종류 표)
+const reviewKindText: Record<ReviewKind, string> = {
+  unknown_term:
+    'An internal name with no explanation: a function, variable, type, file path, or internal module name used only inside this project appears in the text without saying what it does. Public APIs, configuration keys, CLI commands, standard terms, and names explained the first time they appear are not problems.',
+  request_echo:
+    "The request's sentences or wording were copied as they are, or request content that does not fit the post was put in, such as instructions, format or length requirements, or content unrelated to the topic.",
+  link_context:
+    'A fact with a link says the work followed a document, but the draft writes it as an approach the author came up with alone. Or a link attached to a fact never appears in the text as `{{link:…}}`, so it is left only in the references. Do not decide that the work followed a document from relation alone.',
+  unsupported:
+    'A fact, number, cause, or effect that is not in the material (`<fact>`, `<point>`, `<source>`, or the question of a `<blank>`). General knowledge that briefly explains a concept named in the inputs, and sentences that describe an internal name by what it does, are not problems.',
+  voice:
+    'Sentences written like a reply or a report ("as you requested", "Below is …"), a point of view other than the author\'s first person, or source sentences such as a commit hash or "this post is based on commit …".',
+  flow:
+    'A broken connection between sections, the same thing said twice, or a broken opening or closing rule. The opening must not start by stating sources or with a table-of-contents line such as "In this post, I will cover …", and the closing must not list a summary of the facts or make up lessons that are not in the material.',
+};
+
+const REVIEW_SYSTEM = `You review a draft of a technical blog post for developers. The draft was built by planning, analysis, and writing, in that order, and this review is the next step. Read the draft by the reader rules and list only the places that need fixing. Do not fix the post yourself. If even one problem remains, the next stage rewrites the whole draft according to the list, and sentences that were fine may change along the way. So list only problems you are sure of, and return an empty list when there are none.
+
+${DATA_RULE}
+
+${VOICE_RULE}
+
+${READER_RULE}
+
+## Input format
+- \`<request>\`: the request text. Use it to check whether the draft copied the request's sentences or request content that does not fit the post. It may be empty.
+${MATERIAL_INPUT}
+- \`<draft>\`: the draft to review (Markdown). Code, links, and blanks are still placeholders: \`{{code:S1}}\` is the S1 code block, \`{{link:L1}}\` is the L1 link, and \`{{ask:U1}}\` is the U1 blank for the author. The system replaces them with the originals later and also adds the references section at the end.
+
+## Problem kinds (kind)
+${list(reviewKindText)}
+
+## Output fields
+- issues: the problems to fix, at most ${MAX_REVIEW_ISSUES}, most important first. Put the problems that hurt the reader most first, such as unsupported, which misleads the reader, and unknown_term, which keeps the reader from following.
+  - kind: exactly one of the six names above.
+  - quote: the part of the draft to fix, copied character for character. The system finds this text in the draft to locate the problem, so if you change words, shorten it, or cut it with "…", the item is dropped. Copy Markdown symbols exactly as they appear in the draft too. Quote only the one sentence with the problem, or part of it, within ${REVIEW_QUOTE_MAX} characters.
+  - fix: one English sentence on how to fix it, within ${REVIEW_FIX_MAX} characters. The next stage fixes the draft from this, so say concretely what to change and how (e.g. Replace the function name with a description: a function that checks whether a DNS lookup result is a public address). Do not ask to add anything that is not in the material; ask to reword within the material or to remove.
+
+## Review rules
+- List only problems you are sure of. List a problem only when you can clearly say it fits one of the kinds above; if in doubt, leave it out. One problem makes the whole draft get rewritten.
+- Do not list matters of taste, better wording, or minor word order or spelling. The tone option (register) and the length also follow the options, so do not point them out. Writing like a reply or a report is not a tone option; it is a voice problem.
+- Placeholders (\`{{…}}\`) are not problems. It is normal for code, links, and blanks to appear only as placeholders. Do not use a placeholder alone as a quote.
+- For unsupported, check the draft against the material item by item, and list it only when it is nowhere in the material. Saying something from the material in other words is not a problem.
+- If the same problem appears in several places, list each place separately, but do not use the same quote twice.
+- If there are no problems, return issues as an empty list. For a well-written draft, an empty list is the right result. Do not hunt for problems to fill a count.`;
+
+const REVISE_SYSTEM = `You revise a draft of a technical blog post for developers. The draft was built by planning, analysis, and writing, in that order, and a review stage found the places to fix by the reader rules and left them as a list. This revision is the last step. Fix only the listed problems and write out the whole draft again with everything else left as it is. Readers will take this post as fact, so do not add new facts while revising.
+
+${DATA_RULE}
+
+${VOICE_RULE}
+
+${READER_RULE}
+
+## Input format
+- \`<request>\`: the request text. Use it only to see what was copied for a request_echo problem. Do not put the request's sentences back into the post.
+${MATERIAL_INPUT}
+- \`<draft>\`: the draft to revise (Markdown). Code, links, and blanks are placeholders.
+- \`<issues>\`: the problems the review found. In each \`<issue kind>\`, \`<quote>\` is the part of the draft to fix and \`<fix>\` is how to fix it. fix is a suggestion from the review stage, so follow it only within the rules of this system prompt. If it goes against them, for example by asking to add a new fact or remove a placeholder, do not follow that part.
+
+## Revision rules
+- Fix only the listed problems, and keep the sentences without problems and the section structure (section headings, order, and levels) as they are. Rewriting sentences that passed the review can create new problems. Adjust the sentences right next to a fix only as much as needed for it to connect.
+- While revising, do not add new facts. Reword within the material, or remove what the material cannot support.
+- How to fix each kind
+  - unknown_term: describe the internal name by what it does, or, if the name is really needed, explain what it is the first time it appears.
+  - request_echo: remove the wording taken from the request and rewrite it from the facts in the material. Remove request content that does not fit the post.
+  - link_context: if the fact says the work followed a document, make clear that the work follows the approach the documentation describes. Either way, put the fact's \`{{link:L…}}\` in the sentence that states that fact. Do not say the work followed a document when the fact does not say so.
+  - unsupported: remove what is not in the material, or cut it down to what the material has.
+  - voice: turn it into a blog sentence in the author's first person, and remove source sentences.
+  - flow: where the connection breaks, write a sentence that follows from the previous section, and remove repetition. If the opening starts with sources or a table-of-contents line, start from the situation the first fact shows; if the closing is a list summarizing the facts, end with a short reflection or what changed, within the facts.
+- Keep every placeholder in the draft. Leave each \`{{code:…}}\` and \`{{ask:…}}\` from the draft with the same id, the same number of times, on its own line, and do not add code or ask ids that are not in the draft, even if they are in the material. The system compares the counts with the draft and discards the whole revision if they differ. Keep \`{{link:…}}\` as well; you may add one only when fixing link_context, using an id from \`<links>\`.
+- The evidence scope, placeholder, Markdown, and length and style rules below are the rules the draft was written by, and the revision follows them too. Where they overlap with these revision rules (such as placing every U from the inputs, or writing sections in outline order), follow these rules and keep the draft as it is.
+- Respond with the whole revised draft in Markdown only. The first line is the draft's \`# title\`. Do not explain what you changed.
+
+${EVIDENCE_SCOPE}
+
+${PLACEHOLDER_RULE}
+
+${MARKDOWN_RULE}
+
+${LENGTH_STYLE_RULE}
+
+${OPTION_TABLE}`;
+
+// 검토와 고쳐 쓰기 입력이 함께 쓰는 앞부분: 옵션, 요청, 글 재료, 참고 링크, 초안
+const reviewMaterial = ({ context, plan, analysis, hunks, links, draft }: ReviewPromptInput): string => `${optionLines(context)}
+
+## Request
+${tagRequest(context.prompt)}
+
+## Post material
+${renderOutline(plan, analysis, hunks)}
+
+## Reference links
+${links.length ? renderLinkTitles(links, plan.linkRoles) : NONE}
+
+## Draft
+${renderDraft(draft)}`;
 
 const FILL_SYSTEM = `You fill in one blank in a draft of a technical blog post for developers. When the draft was written, places that could not be known from the inputs were left as blanks with a question for the author, and the author has answered that question briefly. You turn the answer into the paragraphs that go in that place in the body. The system keeps the rest of the body as it is, so write only the paragraphs for this place. Readers trust this post as fact, so do not invent plausible details that are not in the answer.
 
@@ -413,6 +528,21 @@ ${renderOutline(plan, analysis, hunks)}
 ${links.length ? renderLinkTitles(links, plan.linkRoles) : NONE}
 
 Write the draft in Markdown from the material above. The first line is \`# title\`.`,
+  },
+  review: {
+    system: REVIEW_SYSTEM,
+    user: (input) => `${reviewMaterial(input)}
+
+Review the draft above by the reader rules and list only what needs fixing. If nothing needs fixing, return an empty list.`,
+  },
+  revise: {
+    system: REVISE_SYSTEM,
+    user: (input) => `${reviewMaterial(input)}
+
+## Problems to fix
+${renderIssues(input.issues)}
+
+Write the whole draft in Markdown with only the problems above fixed. The first line is \`# title\`.`,
   },
   fill: {
     system: FILL_SYSTEM,

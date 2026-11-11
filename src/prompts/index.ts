@@ -8,6 +8,8 @@ export type {
   FillPromptInput,
   PlanPromptInput,
   PromptPack,
+  ReviewPromptInput,
+  RevisePromptInput,
   WritePromptInput,
 } from './types.ts';
 

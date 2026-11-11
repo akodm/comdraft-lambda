@@ -3,6 +3,7 @@ import type { PreparedLink } from '../generation/links.ts';
 import { estimateTokens, LINK_PREVIEW_CHARS, PLAN_CATALOG_TOKENS } from '../generation/limits.ts';
 import type { PreparedCommit, PreparedFile, PreparedHunk } from '../generation/prepare.ts';
 import type { Analysis, LinkRoleEntry, Plan } from '../generation/schemas.ts';
+import type { ReviewIssue } from '../generation/review.ts';
 import type { StoredAnalysis } from '../generation/stored-analysis.ts';
 import {
   LENGTHS,
@@ -26,7 +27,8 @@ import {
 const TAGS = [
   'request', 'commit', 'message', 'files', 'hunk', 'link', 'links', 'title', 'text', 'plan',
   'section', 'heading', 'purpose', 'hunks', 'takeaway', 'outline', 'fact', 'code', 'point',
-  'source', 'blank', 'context', 'analysis', 'question', 'answer',
+  'source', 'blank', 'context', 'analysis', 'question', 'answer', 'draft', 'issues', 'issue',
+  'quote', 'fix',
 ] as const;
 type Tag = (typeof TAGS)[number];
 
@@ -282,6 +284,27 @@ export const renderOutline = (
       inline('takeaway', {}, plan.takeaway),
       ...plan.sections.map((section, index) => renderSection(index, section, analysis, hunks)),
     ].join('\n'),
+  );
+
+// ---- 검토·고쳐 쓰기: 자리표시자가 있는 초안과 검토가 찾은 문제 ----
+
+// 작성 단계가 쓴 자리표시자 형태의 초안 Markdown
+export const renderDraft = (markdown: string): string => element('draft', {}, escapeTagText(markdown));
+
+// 검토가 찾은 문제. quote 는 초안에서 옮긴 부분, fix 는 고칠 방법이다.
+export const renderIssues = (issues: ReviewIssue[]): string =>
+  element(
+    'issues',
+    {},
+    issues
+      .map((issue) =>
+        element(
+          'issue',
+          { kind: issue.kind },
+          [inline('quote', {}, issue.quote), inline('fix', {}, issue.fix)].join('\n'),
+        ),
+      )
+      .join('\n'),
   );
 
 // ---- 빈칸 채우기: 지금 본문, 저장한 분석, 질문, 답 ----

@@ -1,6 +1,7 @@
 import type { JobBlank, JobContext, JobLocale } from '../jobs.ts';
 import type { PreparedLink } from '../generation/links.ts';
 import type { PreparedCommit, PreparedHunk } from '../generation/prepare.ts';
+import type { ReviewIssue } from '../generation/review.ts';
 import type { Analysis, BlankKind, Plan } from '../generation/schemas.ts';
 import type { StoredAnalysis } from '../generation/stored-analysis.ts';
 
@@ -49,6 +50,16 @@ export interface WritePromptInput {
   links: PreparedLink[];
 }
 
+// 검토: 작성 재료와 작성 단계가 쓴 자리표시자 형태의 초안
+export interface ReviewPromptInput extends WritePromptInput {
+  draft: string;
+}
+
+// 고쳐 쓰기: 검토 입력과 검증을 통과한 문제 목록
+export interface RevisePromptInput extends ReviewPromptInput {
+  issues: ReviewIssue[];
+}
+
 // 빈칸 채우기: 지금 본문(대상 자리 {{target}}), 첫 작성 때 저장한 분석(없을 수 있음), 질문과 답
 export interface FillPromptInput {
   context: JobContext;
@@ -64,15 +75,19 @@ interface Stage<I> {
 // 로케일별 프롬프트 묶음. 로케일을 추가할 때는 이 타입을 채운 파일 하나만 더한다.
 export interface PromptPack {
   locale: JobLocale;
-  // 세 단계 system 에 모두 들어가는 데이터-지시 분리 문장의 고정 구절 (테스트용)
+  // 모든 단계 system 에 들어가는 데이터-지시 분리 문장의 고정 구절 (테스트용)
   dataRuleMarker: string;
-  // 기획·작성 system 에 들어가는 글쓴이 목소리 규칙의 고정 구절 (테스트용)
+  // 기획·작성·검토·고쳐 쓰기·빈칸 채우기 system 에 들어가는 글쓴이 목소리 규칙의 고정 구절 (테스트용)
   voiceRuleMarker: string;
   // 모든 단계 system 에 들어가는 독자 기준 규칙의 고정 구절 (테스트용)
   readerRuleMarker: string;
   plan: Stage<PlanPromptInput>;
   analyze: Stage<AnalyzePromptInput>;
   write: Stage<WritePromptInput>;
+  // 작성한 초안을 독자 기준으로 점검해 고칠 곳만 적는 단계 (구조화된 출력)
+  review: Stage<ReviewPromptInput>;
+  // 검토가 찾은 문제만 고쳐 초안 전체를 다시 쓰는 단계
+  revise: Stage<RevisePromptInput>;
   // 빈칸 하나를 글쓴이 답으로 다듬는 단계 (초안 작성과 별개의 작업)
   fill: Stage<FillPromptInput>;
   // 문체 지시
