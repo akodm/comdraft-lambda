@@ -150,17 +150,38 @@ export const fileNames = (commits: PreparedCommit[]): Map<string, string> =>
 
 const fileIdOf = (hunkId: string): string => hunkId.replace(/\.H\d+$/, '');
 
+// 파일 번호 → 그 파일을 뒤에서 마지막으로 다시 바꾼 커밋 번호 (뒤 커밋이 다시 바꾸지 않은 파일은 없음)
+// 커밋은 오래된 순(C1 부터)이라, 앞 커밋 hunk 의 코드가 최종 상태가 아닐 수 있음을 분석 단계에 알린다
+export const laterChanges = (commits: PreparedCommit[]): Map<string, string> => {
+  const later = new Map<string, string>();
+  commits.forEach((commit, index) => {
+    for (const file of commit.files) {
+      const last = commits
+        .slice(index + 1)
+        .findLast((next) => next.files.some((other) => other.filename === file.filename));
+      if (last) later.set(file.id, last.id);
+    }
+  });
+  return later;
+};
+
 // hunk 원문. 각 줄 앞에 hunk 안 줄 번호(1부터)를 붙인다. `@@` 줄에는 번호가 없다.
-export const renderHunks = (hunks: PreparedHunk[], files: Map<string, string> = new Map()): string =>
+// later 가 있으면 뒤 커밋이 같은 파일을 다시 바꾼 hunk 에 changed-later 로 그 커밋 번호를 붙인다.
+export const renderHunks = (
+  hunks: PreparedHunk[],
+  files: Map<string, string> = new Map(),
+  later: Map<string, string> = new Map(),
+): string =>
   hunks
     .map((hunk) => {
       const width = String(hunk.lines.length).length;
       const lines = hunk.lines.map(
         (line, i) => `${String(i + 1).padStart(width)} | ${escapeTagText(line)}`,
       );
+      const fileId = fileIdOf(hunk.id);
       return element(
         'hunk',
-        { id: hunk.id, lang: hunk.language, file: files.get(fileIdOf(hunk.id)) },
+        { id: hunk.id, lang: hunk.language, file: files.get(fileId), 'changed-later': later.get(fileId) },
         [escapeTagText(hunk.header), ...lines].join('\n'),
       );
     })

@@ -218,6 +218,64 @@ describe('비교 실행에서 찾은 문제 규칙', () => {
   }
 });
 
+// 운영 초안 비교(같은 커밋, 이전·새 설계)에서 찾은 문제: 문서를 따랐다는 과한 단정, 절을 넘는 반복, 근거 없는 문제 틀
+describe('운영 초안 비교에서 찾은 문제 규칙', () => {
+  const PHRASES = {
+    ko: {
+      docsCompare: '같은 점과 다른 점을 함께 본다',
+      docsOnce: '같은 문서 내용은 사실 하나로만 적고',
+      factOnce: '한 사실은 가장 맞는 절 하나에만 둔다',
+      planProblem: '실제 문제나 실패가 확인될 때만',
+      planConfig: '작은 설정 변경은 한 절에 모으고',
+      writeCause: '원인이나 문제를 말하는 연결은 사실에 그 원인이나 문제가 적혀 있을 때만 쓴다',
+      writeLinkOnce: '같은 문서 이야기는 글에서 한 번만 하고',
+      reviewDocs: '같은 방식이다',
+      reviewCause: '사실에 없는 인과',
+      reviewRepeat: '두 절 이상에 다시 나오는 것',
+    },
+    en: {
+      docsCompare: 'look at what is the same and what is different',
+      docsOnce: 'State the same document content as one fact only',
+      factOnce: 'Put each fact in the one section it fits best',
+      planProblem: 'show an actual problem or failure',
+      planConfig: 'Gather small configuration changes',
+      writeCause: 'only when the facts state that cause or problem',
+      writeLinkOnce: "Tell the same document's story only once in the post",
+      reviewDocs: 'the same approach',
+      reviewCause: 'set up a cause',
+      reviewRepeat: 'appearing again in two or more sections',
+    },
+  } as const;
+
+  for (const pack of packs) {
+    const phrase = PHRASES[pack.locale];
+
+    it(`${pack.locale}: 분석은 문서와 같은 점·다른 점을 따지고 문서 이야기를 한 번만 적는다`, () => {
+      assert.ok(pack.analyze.system.includes(phrase.docsCompare));
+      assert.ok(pack.analyze.system.includes(phrase.docsOnce));
+      assert.ok(pack.analyze.system.includes(phrase.factOnce));
+    });
+
+    it(`${pack.locale}: 기획은 근거 없는 문제 틀을 세우지 않고 작은 설정 변경을 한 절에 모은다`, () => {
+      assert.ok(pack.plan.system.includes(phrase.planProblem));
+      assert.ok(pack.plan.system.includes(phrase.planConfig));
+    });
+
+    it(`${pack.locale}: 작성과 고쳐 쓰기는 근거 없는 인과를 쓰지 않고 같은 문서 이야기를 한 번만 한다`, () => {
+      assert.ok(pack.write.system.includes(phrase.writeCause));
+      for (const stage of [pack.write, pack.revise]) {
+        assert.ok(stage.system.includes(phrase.writeLinkOnce));
+      }
+    });
+
+    it(`${pack.locale}: 검토는 과한 문서 단정, 근거 없는 인과, 절을 넘는 반복을 짚는다`, () => {
+      assert.ok(pack.review.system.includes(phrase.reviewDocs));
+      assert.ok(pack.review.system.includes(phrase.reviewCause));
+      assert.ok(pack.review.system.includes(phrase.reviewRepeat));
+    });
+  }
+});
+
 describe('독자 기준과 요청·링크·빈칸 답 규칙', () => {
   it('기획·분석·작성·빈칸 채우기 system 은 독자 규칙을 담는다', () => {
     assert.equal(getPromptPack('ko').readerRuleMarker, '독자는 이 저장소와 코드, 요청 문구를 본 적이 없다');
@@ -667,6 +725,29 @@ describe('getPromptPack', () => {
     assert.match(text, /3 \| \+observer\.observe\(el\);/);
     assert.ok(text.includes(link.text));
   });
+
+  it('뒤 커밋이 같은 파일을 다시 바꿨으면 앞 hunk 에 가장 마지막으로 바꾼 커밋 번호를 붙인다', () => {
+    const later = hunk('C2.F1.H1', [' const a = 1;', '+observer.disconnect();']);
+    const last = hunk('C3.F1.H1', [' const a = 1;', '+cleanup();']);
+    const text = getPromptPack('ko').analyze.user({
+      context: context(),
+      plan,
+      commits: [commit('C1', [h1]), commit('C2', [later]), commit('C3', [last])],
+      hunks: [h1, later, last],
+      links: [],
+    });
+    assert.match(text, /<hunk id="C1\.F1\.H1" lang="ts" file="src\/use-lazy-image\.ts" changed-later="C3">/);
+    assert.match(text, /<hunk id="C2\.F1\.H1" lang="ts" file="src\/use-lazy-image\.ts" changed-later="C3">/);
+    // 마지막 커밋의 hunk 와, 뒤에 다시 바뀌지 않은 파일에는 붙이지 않는다
+    assert.match(text, /<hunk id="C3\.F1\.H1" lang="ts" file="src\/use-lazy-image\.ts">/);
+  });
+
+  for (const pack of packs) {
+    it(`${pack.locale}: 분석·기획 system 은 changed-later 를 설명하고 마지막 상태의 코드를 고르게 한다`, () => {
+      assert.ok(pack.analyze.system.includes('changed-later'));
+      assert.ok(pack.plan.system.includes(pack.locale === 'ko' ? '뒤 커밋이 다시 바꾼 파일' : 'a file a later commit changes again'));
+    });
+  }
 });
 
 const blank = {

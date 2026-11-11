@@ -11,6 +11,7 @@ import {
   renderFillAnswer,
   renderFillContext,
   renderFillQuestion,
+  laterChanges,
   renderHunks,
   renderIssues,
   renderLinks,
@@ -203,8 +204,11 @@ ${Object.entries(linkRoleText)
 - Keep the number of sections within the range for the length option. The post type's flow is the order in which the story leads the reader. Do not turn each step of the flow into a section to fill in; divide the sections so the story of this work follows that flow. If the flow has more steps than sections, merge neighboring steps into one section; if it has fewer, split the steps with more story.
 - If the required blocks include h3–h6, actually include sections at those levels. Place deeper headings as subsections under a higher-level section; a subsection is still one item in sections and counts toward the section count. The section range takes priority over heading depth, so if not everything fits, stay within the range and go only as deep as fits. Place subsections at a required level under the section with the most evidence; under a section without evidence they are likely to be dropped at the writing stage.
 - Even for a step in the flow, if the inputs have no evidence for it (e.g. result numbers, lessons), do not give it its own section; merge it into a neighboring section. A section without evidence ends up as nothing but blanks the author has to write. Do not state facts that are not in the inputs in a heading or purpose.
+- Use words such as "problem", "ran into", or "error" in a heading or purpose only when the commit messages, the request, or the code (e.g. a change that adds error handling) show an actual problem or failure. Setting up a problem without evidence opens the post with a made-up conflict. If no problem is confirmed, connect the sections in the order of the work.
+- Gather small configuration changes such as configuration files, build scripts, and tsconfig into one section instead of scattering them into sections about other topics.
 - Choose only hunks of [included] files whose ids are shown in the catalog, or ids H1–HN of a \`(+N hunks)\` file. The next stage receives at most 30 hunks, taken from earlier sections first and, within a section, in listed order, so put the key hunks first. Prefer code that shows the topic over tests, configuration, and minor fixes.
 - Do not choose the same hunk for more than one section.
+- For a file a later commit changes again, choose the hunk of the last commit. A hunk from an earlier commit is not the final code, so choose it as well only when how the code changed from its first form is central to the story.
 - Write one linkRoles entry for every input link. Decide role by reading the link's body. Write in relation only what the link's body and the commit messages, file lines, and hunk lines confirm; do not guess. The next stage looks for facts based on relation, so a guessed relation makes work that did not follow a document look as if it did. Also add a link with a relation to the links of the section that covers that part.
 - Write title, takeaway, heading, purpose, reason, and relation in English.
 
@@ -222,7 +226,7 @@ ${ID_RULE}
 - \`<request>\`: the request text (evidence id R)
 - \`<plan>\`: the plan. The index in \`<section index="0" level="2">\` is the section number. \`<hunks>\` and \`<links>\` are the ids the plan chose for that section.
 - \`<commit id="C1">\`: the full commit message
-- \`<hunk id="C1.F2.H1" lang="ts" file="path">\`: the original text of a change block. The first line is the \`@@\` line; every line below it starts with its line number within the hunk (from 1) and \`|\`. The first character after \`| \` is \`+\` for added, \`-\` for removed, and a space for an unchanged context line.
+- \`<hunk id="C1.F2.H1" lang="ts" file="path">\`: the original text of a change block. The first line is the \`@@\` line; every line below it starts with its line number within the hunk (from 1) and \`|\`. The first character after \`| \` is \`+\` for added, \`-\` for removed, and a space for an unchanged context line. A hunk with \`changed-later="C3"\` means a later commit (C3) changed the same file again; this hunk's code may not be the final state.
 - \`<link id="L1" role="docs" relation="…">\`: a reference link's title and body. role is the link's role as decided by the plan (${linkRoleSummary}), and relation is the part of this work it connects to. A link without relation is one where the plan found no connected part. role and relation are the plan's judgment, not evidence in themselves; use them as guidance on where to look.
 
 ## Evidence rules
@@ -238,9 +242,11 @@ ${ID_RULE}
 - Facts read from code cover what the code changes and how it behaves, nothing more. Do not infer from code alone why it was changed (motivation), its effect or numbers (results), or lessons learned. State those as facts only when the request, a commit message, or a link says so; otherwise leave them out of the facts. Whether to ask about them as a blank follows the blank rules.
 - A fact backed only by a link covers no more than what that document explains (the fact that this work followed the document is stated with a hunk, per the rules below). Results, numbers, and motivations in a link belong to that document, so attribute them in the fact text (e.g. according to L1, …). Results and numbers about this project may be stated as facts only when the request (R) or a commit message says so.
 - To say a link's approach was applied in this project, you also need commit or hunk evidence.
-- If a code change appears to follow the steps, recommended approach, or API usage of a docs link, state that as a fact with the hunk and the link together as evidence (e.g. "I added the message extraction setup following the setup steps in the official documentation for Lingui", with that hunk and L1 as evidence). Without this fact, work done as the documentation describes reads like an approach the author came up with alone. Do the same when the code appears to follow the approach of an article or discussion link. Here too, state the fact as "I did … following …", not "this appears to follow …".
+- When comparing a code change with a docs link, look at what is the same and what is different. Write that the work followed the document only when the core approach is the same (what is kept where and when it is created, which APIs are used); if it only looks similar but works differently, state the difference (e.g. "The documentation keeps an instance in cache per request, but here I created one instance per language up front"). Writing a difference as following the document makes the post wrong for a reader who compares the document and the code.
+- If a code change follows the steps, recommended approach, or API usage of a docs link, state that as a fact with the hunk and the link together as evidence (e.g. "I added the message extraction setup following the setup steps in the official documentation for Lingui", with that hunk and L1 as evidence). Without this fact, work done as the documentation describes reads like an approach the author came up with alone. Do the same when the code appears to follow the approach of an article or discussion link. Here too, state the fact as "I did … following …", not "this appears to follow …".
 - If the code shows something done differently from the document, state that as a fact too. Why it was done differently is not a fact without evidence; leave it to the blank rules.
-- Carry over only as much of the document as is needed to understand this work. A list of facts summarizing the document turns the post into an introduction to the document instead of the story of the work.
+- Carry over only as much of the document as is needed to understand this work. A list of facts summarizing the document turns the post into an introduction to the document instead of the story of the work. State the same document content as one fact only, and do not repeat it in other sections.
+- A fact read from a hunk with changed-later may not describe the final state. If the later commit's hunk is in the code changes, confirm the final state from it; if both the first form and the change are visible, state the order, as in "At first I …, and later I changed it to …". Pick code from the hunk that shows the final state, and pick an earlier hunk's code only to show how it changed (diff mode suits this).
 - Write fact text and point by the reader rules, because these sentences become the post almost as they are. Ids in evidence already pin down the identifiers, so put identifiers in the sentence only when needed, and describe internal names by what they do. When you do use a function name, file path, library name, or number, copy its spelling exactly as it appears in the inputs.
 - Do not write commit ids (C1) or hashes in fact text; put sources only in evidence. These sentences are carried into the post, and sources mixed into them read like repository history to the reader.
 
@@ -267,6 +273,7 @@ ${ID_RULE}
 ## Filling sections
 - For each section, first look for the facts and code that back its purpose.
 - Do not fill a section with blanks because you found no evidence for it. Leave such a section without facts; the writing stage merges it into a neighboring section. Do not inflate or split facts to add volume.
+- Put each fact in the one section it fits best. Do not split the same change into different wording across sections, or show content you listed as facts again as code (e.g. if you listed configuration values as facts, do not pick the same configuration file as code). When the same content appears in several sections, readers read again what they already read.
 - Write text, point, and ask in English.`;
 
 // 작성 재료(글 재료, 참고 링크)의 입력 형식 설명 (작성·검토·고쳐 쓰기가 함께 쓴다)
@@ -287,7 +294,7 @@ const EVIDENCE_SCOPE = `## Evidence scope
 const PLACEHOLDER_RULE = `## Placeholders
 Do not write code, links, or blanks directly; insert them only with the three placeholders below. The system replaces them with the originals, which keeps code and addresses exact.
 - \`{{code:S1}}\`: a code block, on its own line. Place each S once in its section, and explain its point in the sentence before or after.
-- \`{{link:L1}}\`: a reference link, inside a sentence about a fact whose links include L1. If a fact names the id, as in "according to L1", write \`{{link:L1}}\` instead of the id. Do not put the same link twice in one paragraph; repeating the same address is clutter.
+- \`{{link:L1}}\`: a reference link, inside a sentence about a fact whose links include L1. If a fact names the id, as in "according to L1", write \`{{link:L1}}\` instead of the id. Do not put the same link twice in one paragraph; repeating the same address is clutter. Tell the same document's story only once in the post, and put the link right after the words that name the document (e.g. "according to the official Lingui tutorial ({{link:L1}})"). A link placed after the period looks detached, like a footnote.
   - When a fact says the work followed a docs link's approach, make clear that the work follows the approach the documentation describes, and put the \`{{link:…}}\` in that sentence. Do not write it as an approach you came up with on your own; the reader should be able to find that document and follow the same approach.
   - When a fact states something done differently from the document, do not say you followed it; write it as a difference. A fact that only carries what the document explains is written as what the document says. Writing the opposite of the fact makes the reader connect the document and the code wrongly.
   - If you drew on an article or discussion link, say what you drew on where that content comes up. A link left only in the references gives the reader no reason to read it.
@@ -326,6 +333,7 @@ ${EVIDENCE_SCOPE}
 - The post follows the post type's flow as one story from start to finish. Do not write it like a dev log that alternates problem and solution section by section.
 - Opening: the first paragraph draws the reader into the situation of the work, describing within the facts the situation that fits the first step of the post type's flow (e.g. background and what started it for experience, why it matters for lecture). If no fact shows the motivation, do not make up a situation; start directly from the first fact. Do not open by stating sources or with a table-of-contents line such as "In this post, I will cover …".
 - Transitions: the first sentence of each section follows from the previous one, so that what was learned in one section leads to the next concern or choice. Use the connection noted in purpose as a guide.
+- Use connectors that state a cause or a problem, such as "so", "because", or "I ran into", only when the facts state that cause or problem. A cause without evidence is a made-up story. Without evidence, connect by the order of the work, as in "next" or "then".
 - Closing: end the last section with a short reflection by the author looking back on the work, not a list summarizing the facts. Keep the reflection within what the facts confirm or what a blank leaves to the author, and do not make up lessons that are not in the inputs. If there is no fact or lesson blank to reflect on, do not make up how you felt; close in one or two sentences, within the facts, on what changed or what is left to do.
 - Do not write a separate section for one that has no facts, code, or blanks, so that no section is filled with unsupported content. But if such a section holds a heading level from the required blocks or has subsections, keep the heading and move a neighboring section's material under it.
 
@@ -344,13 +352,13 @@ const reviewKindText: Record<ReviewKind, string> = {
   request_echo:
     "The request's sentences or wording were copied as they are, or request content that does not fit the post was put in, such as instructions, format or length requirements, or content unrelated to the topic.",
   link_context:
-    'A fact with a link says the work followed a document, but the draft writes it as an approach the author came up with alone. Or a link attached to a fact never appears in the text as `{{link:…}}`, so it is left only in the references. Do not decide that the work followed a document from relation alone.',
+    'A fact with a link says the work followed a document, but the draft writes it as an approach the author came up with alone. Or a link attached to a fact never appears in the text as `{{link:…}}`, so it is left only in the references. Do not decide that the work followed a document from relation alone. Conversely, a draft that says "followed the document" or "the same approach" when the fact says the work differs from the document, or does not say it followed it, is also this problem.',
   unsupported:
-    'A fact, number, cause, or effect that is not in the material (`<fact>`, `<point>`, `<source>`, or the question of a `<blank>`). General knowledge that briefly explains a concept named in the inputs, and sentences that describe an internal name by what it does, are not problems.',
+    'A fact, number, cause, or effect that is not in the material (`<fact>`, `<point>`, `<source>`, or the question of a `<blank>`). Sentences that set up a cause ("so", "because") or a problem or conflict ("the problem I ran into") not in the facts are also this problem. General knowledge that briefly explains a concept named in the inputs, and sentences that describe an internal name by what it does, are not problems.',
   voice:
     'Sentences written like a reply or a report ("as you requested", "Below is …"), a point of view other than the author\'s first person, guessing about the author\'s own work ("this appears to …"), sentences that announce or point at a blank, or source sentences such as a commit hash or "this post is based on commit …".',
   flow:
-    'A broken connection between sections, the same thing said twice, or a broken opening or closing rule. The opening must not start by stating sources or with a table-of-contents line such as "In this post, I will cover …", and the closing must not list a summary of the facts or make up lessons that are not in the material.',
+    'A broken connection between sections, the same thing said twice (including the same change or document explanation appearing again in two or more sections), or a broken opening or closing rule. The opening must not start by stating sources or with a table-of-contents line such as "In this post, I will cover …", and the closing must not list a summary of the facts or make up lessons that are not in the material.',
 };
 
 const REVIEW_SYSTEM = `You review a draft of a technical blog post for developers. The draft was built by planning, analysis, and writing, in that order, and this review is the next step. Read the draft by the reader rules and list only the places that need fixing. Do not fix the post yourself. If even one problem remains, the next stage rewrites the whole draft according to the list, and sentences that were fine may change along the way. So list only problems you are sure of, and return an empty list when there are none.
@@ -512,7 +520,7 @@ ${renderPlan(plan, new Set(hunks.map((hunk) => hunk.id)))}
 ${orNone(renderCommitMessages(commits))}
 
 ## Code changes
-${hunks.length ? renderHunks(hunks, fileNames(commits)) : `${NONE} There are no hunks to read. Look for facts only in the commit messages, the request, and the links.`}
+${hunks.length ? renderHunks(hunks, fileNames(commits), laterChanges(commits)) : `${NONE} There are no hunks to read. Look for facts only in the commit messages, the request, and the links.`}
 
 ## Reference links
 ${orNone(renderLinks(links, { preview: false, roles: plan.linkRoles }))}
