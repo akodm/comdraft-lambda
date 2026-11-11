@@ -212,6 +212,21 @@ describe('독자 기준과 요청·링크·빈칸 답 규칙', () => {
     }
   });
 
+  it('작성 system 은 사실이 문서를 따랐다고 말할 때만 따랐다고 쓰고, 다르게 한 점은 다르게 한 점으로 쓴다', () => {
+    const ko = getPromptPack('ko').write.system;
+    assert.ok(!ko.includes('docs 링크가 붙은 사실은'));
+    assert.ok(!ko.includes('문서를 따랐다고 쓰는 근거는 links 에 그 링크가 있는'));
+    assert.ok(ko.includes('사실이 docs 링크의 방식을 따랐다고 말하면'));
+    assert.ok(ko.includes('문서를 따랐다고 쓰려면 그렇게 말하는'));
+    assert.ok(ko.includes('다르게 한 점으로 쓴다'));
+    const en = getPromptPack('en').write.system;
+    assert.ok(!en.includes('For a fact with a docs link'));
+    assert.ok(!en.includes('what lets you say the work followed a document is'));
+    assert.ok(en.includes("When a fact says the work followed a docs link's approach"));
+    assert.ok(en.includes('only when a `<fact>` says so'));
+    assert.ok(en.includes('write it as a difference'));
+  });
+
   it('빈칸 채우기 system 은 답 전체가 아니라 맞는 부분만 고르게 한다', () => {
     const ko = getPromptPack('ko').fill.system;
     assert.ok(!ko.includes('답을 사실로 삼아'));

@@ -276,7 +276,7 @@ ${READER_RULE}
   - \`<fact id="K1" links="L1">\`: a fact you may use. links are the reference links it comes from.
   - \`<code id="S1" lang mode>\`: code to show. \`<point>\` is what to notice and \`<source>\` is the actual code. It is shown so you can explain it, so do not copy it into the text.
   - \`<blank id="U1" kind>\`: a blank for the author to fill in, with its question
-- \`<links>\`: reference links, each a \`<link id role relation>\` holding its title. role is the link's role (${linkRoleSummary}), and relation is the part of this work it connects to (it may be absent). relation is guidance on where to bring the link in; what lets you say the work followed a document is a \`<fact>\` whose links include that link.
+- \`<links>\`: reference links, each a \`<link id role relation>\` holding its title. role is the link's role (${linkRoleSummary}), and relation is the part of this work it connects to (it may be absent). relation is only guidance on where to bring the link in. Say the work followed a document only when a \`<fact>\` says so. A fact with a link may just carry over what the document explains, or may state something done differently from it.
 
 ## Evidence scope
 - State only what is in \`<fact>\`. Do not introduce new numbers, names, versions, causes, or effects.
@@ -296,7 +296,8 @@ ${READER_RULE}
 Do not write code, links, or blanks directly; insert them only with the three placeholders below. The system replaces them with the originals, which keeps code and addresses exact.
 - \`{{code:S1}}\`: a code block, on its own line. Place each S once in its section, and explain its point in the sentence before or after.
 - \`{{link:L1}}\`: a reference link, inside a sentence about a fact whose links include L1. If a fact names the id, as in "according to L1", write \`{{link:L1}}\` instead of the id.
-  - For a fact with a docs link, make clear that the work follows the approach the documentation describes, and put the \`{{link:…}}\` in that sentence. Do not write it as an approach you came up with on your own; the reader should be able to find that document and follow the same approach.
+  - When a fact says the work followed a docs link's approach, make clear that the work follows the approach the documentation describes, and put the \`{{link:…}}\` in that sentence. Do not write it as an approach you came up with on your own; the reader should be able to find that document and follow the same approach.
+  - When a fact states something done differently from the document, do not say you followed it; write it as a difference. A fact that only carries what the document explains is written as what the document says. Writing the opposite of the fact makes the reader connect the document and the code wrongly.
   - If you drew on an article or discussion link, say what you drew on where that content comes up. A link left only in the references gives the reader no reason to read it.
   - Keep what the document says brief, only as much as this work needs.
 - \`{{ask:U1}}\`: a blank for the author, on its own line. Place every U from the inputs once in its section, and do not create new blanks.
