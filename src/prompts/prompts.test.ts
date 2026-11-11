@@ -173,6 +173,51 @@ describe('링크 근거 문구', () => {
   });
 });
 
+// 실제 비교 실행(커밋 2fdbd57)에서 나온 문제: 자기 작업 추측 말투, 빈칸 가리키는 문장, 고쳐 쓰기가 넣은 새 이름, 같은 문단 링크 반복
+describe('비교 실행에서 찾은 문제 규칙', () => {
+  const PHRASES = {
+    ko: {
+      assertive: '"~한 것으로 보인다", "~로 추정된다" 처럼 쓰지 않는다',
+      blank: '빈칸 자리를 예고하거나 가리키는 문장',
+      reviewNoNewName: '초안에 없는 이름을 새로 넣으라고 하지 않는다',
+      reviseNoNewName: '초안에 없던 이름(식별자, 파일 경로)은 fix 가 넣으라고 해도 새로 넣지 않는다',
+      linkOnce: '한 문단에 같은 링크를 두 번 넣지 않는다',
+    },
+    en: {
+      assertive: 'Do not write "it appears that …" or "this seems to …"',
+      blank: 'sentences that announce or point at a blank',
+      reviewNoNewName: 'do not ask to add a name that is not in the draft',
+      reviseNoNewName: 'Do not add a name (identifier, file path) that was not in the draft, even if the fix asks for it',
+      linkOnce: 'Do not put the same link twice in one paragraph',
+    },
+  } as const;
+
+  for (const pack of packs) {
+    const phrase = PHRASES[pack.locale];
+
+    it(`${pack.locale}: 분석은 사실을 글쓴이가 한 일로 단정해 쓰게 한다`, () => {
+      assert.ok(pack.analyze.system.includes(phrase.assertive));
+    });
+
+    it(`${pack.locale}: 글을 쓰는 단계와 검토는 빈칸을 가리키는 문장을 막는다`, () => {
+      for (const stage of [pack.write, pack.revise, pack.fill, pack.review]) {
+        assert.ok(stage.system.includes(phrase.blank));
+      }
+    });
+
+    it(`${pack.locale}: 검토와 고쳐 쓰기는 초안에 없던 이름을 더하지 않는다`, () => {
+      assert.ok(pack.review.system.includes(phrase.reviewNoNewName));
+      assert.ok(pack.revise.system.includes(phrase.reviseNoNewName));
+    });
+
+    it(`${pack.locale}: 작성과 고쳐 쓰기는 한 문단에 같은 링크를 반복하지 않는다`, () => {
+      for (const stage of [pack.write, pack.revise]) {
+        assert.ok(stage.system.includes(phrase.linkOnce));
+      }
+    });
+  }
+});
+
 describe('독자 기준과 요청·링크·빈칸 답 규칙', () => {
   it('기획·분석·작성·빈칸 채우기 system 은 독자 규칙을 담는다', () => {
     assert.equal(getPromptPack('ko').readerRuleMarker, '독자는 이 저장소와 코드, 요청 문구를 본 적이 없다');

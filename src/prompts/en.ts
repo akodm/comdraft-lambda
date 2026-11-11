@@ -82,7 +82,8 @@ const VOICE_RULE = `## Voice
 - ${voiceRuleMarker}. The author is introducing their own work to other developers, and the reader has never seen the request. The request tells you what to write and where to focus; the post does not answer it.
 - Write in the author's first person (e.g. "I did …", "I decided to …"). Follow the tone option for register, but the point of view is always the author's.
 - Do not write like a reply or a report. Phrases such as "as you requested", "Below is …", or "To summarize, here is …" answer the request, so the post reads like a reply instead of a blog post.
-- Do not write source sentences such as a commit hash, a commit id (C1), or "this post is based on commit …". Readers come for the story of the work, not the repository history.`;
+- Do not write source sentences such as a commit hash, a commit id (C1), or "this post is based on commit …". Readers come for the story of the work, not the repository history.
+- Do not write sentences that announce or point at a blank ("I explain why in the next blank", "I note it below"). Once the author fills a blank it becomes body text, so a sentence pointing at it stays behind and reads oddly.`;
 
 const readerRuleMarker = 'The reader has never seen this repository, its code, or the request';
 
@@ -229,6 +230,7 @@ ${ID_RULE}
 - Every fact needs at least one evidence id. The only usable ids are commits (C1), hunks (C1.F2.H1), links (L1), and the request (R). File ids (C1.F2) cannot be evidence.
 - Hunk evidence ids and code \`from\` must be ids of \`<hunk>\` tags actually shown under Code changes. A hunk that is not shown was never read, so it cannot be evidence.
 - Evidence must show the fact directly. Guesses, general knowledge, and "this probably…" are not facts.
+- State each fact as something the author did (e.g. "I changed … so that …", "I added … following the setup steps"). Do not write "it appears that …" or "this seems to …". The author does not guess about their own work, and this sentence goes into the post. If the evidence does not let you state it, do not leave it as a guess; do not make that fact.
 - R supports only what the request text literally states, and you may make a fact from it only when both conditions hold. The request is guidance on the post's direction, so putting it in the facts carries its sentences straight into the post.
   1. It is an experience or fact the author states (motivation, results, numbers, a description of the project).
   2. It fits the topic of the post and the purpose of the section the fact goes in.
@@ -236,7 +238,7 @@ ${ID_RULE}
 - Facts read from code cover what the code changes and how it behaves, nothing more. Do not infer from code alone why it was changed (motivation), its effect or numbers (results), or lessons learned. State those as facts only when the request, a commit message, or a link says so; otherwise leave them out of the facts. Whether to ask about them as a blank follows the blank rules.
 - A fact backed only by a link covers no more than what that document explains (the fact that this work followed the document is stated with a hunk, per the rules below). Results, numbers, and motivations in a link belong to that document, so attribute them in the fact text (e.g. according to L1, …). Results and numbers about this project may be stated as facts only when the request (R) or a commit message says so.
 - To say a link's approach was applied in this project, you also need commit or hunk evidence.
-- If a code change appears to follow the steps, recommended approach, or API usage of a docs link, state that as a fact with the hunk and the link together as evidence (e.g. "I added the message extraction setup following the setup steps in the official documentation for Lingui", with that hunk and L1 as evidence). Without this fact, work done as the documentation describes reads like an approach the author came up with alone. Do the same when the code appears to follow the approach of an article or discussion link.
+- If a code change appears to follow the steps, recommended approach, or API usage of a docs link, state that as a fact with the hunk and the link together as evidence (e.g. "I added the message extraction setup following the setup steps in the official documentation for Lingui", with that hunk and L1 as evidence). Without this fact, work done as the documentation describes reads like an approach the author came up with alone. Do the same when the code appears to follow the approach of an article or discussion link. Here too, state the fact as "I did … following …", not "this appears to follow …".
 - If the code shows something done differently from the document, state that as a fact too. Why it was done differently is not a fact without evidence; leave it to the blank rules.
 - Carry over only as much of the document as is needed to understand this work. A list of facts summarizing the document turns the post into an introduction to the document instead of the story of the work.
 - Write fact text and point by the reader rules, because these sentences become the post almost as they are. Ids in evidence already pin down the identifiers, so put identifiers in the sentence only when needed, and describe internal names by what they do. When you do use a function name, file path, library name, or number, copy its spelling exactly as it appears in the inputs.
@@ -285,7 +287,7 @@ const EVIDENCE_SCOPE = `## Evidence scope
 const PLACEHOLDER_RULE = `## Placeholders
 Do not write code, links, or blanks directly; insert them only with the three placeholders below. The system replaces them with the originals, which keeps code and addresses exact.
 - \`{{code:S1}}\`: a code block, on its own line. Place each S once in its section, and explain its point in the sentence before or after.
-- \`{{link:L1}}\`: a reference link, inside a sentence about a fact whose links include L1. If a fact names the id, as in "according to L1", write \`{{link:L1}}\` instead of the id.
+- \`{{link:L1}}\`: a reference link, inside a sentence about a fact whose links include L1. If a fact names the id, as in "according to L1", write \`{{link:L1}}\` instead of the id. Do not put the same link twice in one paragraph; repeating the same address is clutter.
   - When a fact says the work followed a docs link's approach, make clear that the work follows the approach the documentation describes, and put the \`{{link:…}}\` in that sentence. Do not write it as an approach you came up with on your own; the reader should be able to find that document and follow the same approach.
   - When a fact states something done differently from the document, do not say you followed it; write it as a difference. A fact that only carries what the document explains is written as what the document says. Writing the opposite of the fact makes the reader connect the document and the code wrongly.
   - If you drew on an article or discussion link, say what you drew on where that content comes up. A link left only in the references gives the reader no reason to read it.
@@ -338,7 +340,7 @@ ${OPTION_TABLE}`;
 // 검토가 찾는 문제 종류의 뜻 (검토 system 의 종류 표)
 const reviewKindText: Record<ReviewKind, string> = {
   unknown_term:
-    'An internal name with no explanation: a function, variable, type, file path, or internal module name used only inside this project appears in the text without saying what it does. Public APIs, configuration keys, CLI commands, standard terms, and names explained the first time they appear are not problems.',
+    'An internal name with no explanation: a function, variable, type, file path, or internal module name used only inside this project appears in the text without saying what it does. Public APIs, configuration keys, CLI commands, standard terms, and names explained the first time they appear are not problems. Write the fix toward removing the name or describing it by what it does; do not ask to add a name that is not in the draft.',
   request_echo:
     "The request's sentences or wording were copied as they are, or request content that does not fit the post was put in, such as instructions, format or length requirements, or content unrelated to the topic.",
   link_context:
@@ -346,7 +348,7 @@ const reviewKindText: Record<ReviewKind, string> = {
   unsupported:
     'A fact, number, cause, or effect that is not in the material (`<fact>`, `<point>`, `<source>`, or the question of a `<blank>`). General knowledge that briefly explains a concept named in the inputs, and sentences that describe an internal name by what it does, are not problems.',
   voice:
-    'Sentences written like a reply or a report ("as you requested", "Below is …"), a point of view other than the author\'s first person, or source sentences such as a commit hash or "this post is based on commit …".',
+    'Sentences written like a reply or a report ("as you requested", "Below is …"), a point of view other than the author\'s first person, guessing about the author\'s own work ("this appears to …"), sentences that announce or point at a blank, or source sentences such as a commit hash or "this post is based on commit …".',
   flow:
     'A broken connection between sections, the same thing said twice, or a broken opening or closing rule. The opening must not start by stating sources or with a table-of-contents line such as "In this post, I will cover …", and the closing must not list a summary of the facts or make up lessons that are not in the material.',
 };
@@ -399,7 +401,7 @@ ${MATERIAL_INPUT}
 - Fix only the listed problems, and keep the sentences without problems and the section structure (section headings, order, and levels) as they are. Rewriting sentences that passed the review can create new problems. Adjust the sentences right next to a fix only as much as needed for it to connect.
 - While revising, do not add new facts. Reword within the material, or remove what the material cannot support.
 - How to fix each kind
-  - unknown_term: describe the internal name by what it does, or, if the name is really needed, explain what it is the first time it appears.
+  - unknown_term: describe the internal name by what it does, or, if the name is really needed, explain what it is the first time it appears. Do not add a name (identifier, file path) that was not in the draft, even if the fix asks for it. Inserting names easily changes what a sentence means.
   - request_echo: remove the wording taken from the request and rewrite it from the facts in the material. Remove request content that does not fit the post.
   - link_context: if the fact says the work followed a document, make clear that the work follows the approach the documentation describes. Either way, put the fact's \`{{link:L…}}\` in the sentence that states that fact. Do not say the work followed a document when the fact does not say so.
   - unsupported: remove what is not in the material, or cut it down to what the material has.
