@@ -45,4 +45,6 @@ export const createPlaceholderPipeline = (): Pipeline => ({
 
     return [`# ${escapeMarkdown(title)}`, ...intro, ...sections].join('\n\n');
   },
+  // 작성 결과가 곧 최종 Markdown 이라 검토 없이 그대로 돌려준다
+  review: async (_input, written) => written as string,
 });

@@ -6,6 +6,7 @@ import type { JobContext } from './jobs.ts';
 import type { PreparedLink } from './generation/links.ts';
 import { estimateJobTokens } from './generation/estimate.ts';
 import { estimateTokens } from './generation/limits.ts';
+import { GenerationFailure } from './errors.ts';
 import type { LlmClient } from './generation/llm.ts';
 import type { Analysis, Plan } from './generation/schemas.ts';
 import type { StoredAnalysis } from './generation/stored-analysis.ts';
@@ -85,10 +86,32 @@ interface ParseCall {
 // 가짜 LLM 이 호출마다 보고하는 사용량
 const CALL_USAGE = 100;
 
-const fakeLlm = (plan: Plan, analysis: Analysis, markdown: string) => {
+// 응답은 값이면 그대로 돌려주고 Error 면 던진다
+type Reply<T> = T | Error;
+
+const reply = <T>(value: Reply<T>): T => {
+  if (value instanceof Error) {
+    throw value;
+  }
+  return value;
+};
+
+const NO_ISSUES = { issues: [] };
+
+// parse 응답은 호출 순서대로 (기획, 분석, 검토), write 응답도 (작성, 고쳐 쓰기)
+// 검토 응답을 따로 주지 않으면 문제 없음으로 답한다
+const fakeLlm = (
+  plan: Plan,
+  analysis: Analysis,
+  markdown: string,
+  extra: { review?: Reply<unknown>; revised?: Reply<string> } = {},
+) => {
   const parses: ParseCall[] = [];
   const writes: ParseCall[] = [];
+  const parseReplies: Reply<unknown>[] = [plan, analysis, extra.review ?? NO_ISSUES];
+  const writeReplies: Reply<string>[] = [markdown, extra.revised ?? markdown];
   let parseIndex = 0;
+  let writeIndex = 0;
   const llm: LlmClient = {
     parse: async <T>(req: {
       system: string;
@@ -100,14 +123,16 @@ const fakeLlm = (plan: Plan, analysis: Analysis, markdown: string) => {
     }) => {
       parses.push(req);
       await req.onUsage?.(CALL_USAGE);
-      const result = parseIndex === 0 ? plan : analysis;
+      const result = reply(parseReplies[parseIndex]);
       parseIndex += 1;
       return result as T;
     },
     write: async (req) => {
       writes.push(req);
       await req.onUsage?.(CALL_USAGE);
-      return markdown;
+      const result = reply(writeReplies[writeIndex]);
+      writeIndex += 1;
+      return result;
     },
   };
   return { llm, parses, writes };
@@ -119,11 +144,17 @@ const run = async (
     context?: Partial<JobContext>;
     commits?: CommitDetail[];
     fetchLinks?: (urls: string[]) => Promise<PreparedLink[]>;
+    remainingTimeMs?: () => number;
   } = {},
 ) => {
+  const errors: unknown[] = [];
   const pipeline = createClaudePipeline({
     llm,
     fetchLinks: options.fetchLinks ?? (async () => LINKS),
+    remainingTimeMs: options.remainingTimeMs ?? (() => 300_000),
+    reportError: (error) => {
+      errors.push(error);
+    },
   });
   const usage: number[] = [];
   const stored: StoredAnalysis[] = [];
@@ -141,8 +172,9 @@ const run = async (
   const estimate = pipeline.estimate(input, prepared);
   const classified = await pipeline.classify(input, prepared);
   const analyzed = await pipeline.analyze(input, classified);
-  const markdown = await pipeline.write(input, analyzed);
-  return { prepared, estimate, classified, analyzed, markdown, usage, stored };
+  const written = await pipeline.write(input, analyzed);
+  const markdown = await pipeline.review(input, written);
+  return { prepared, estimate, classified, analyzed, written, markdown, usage, stored, errors };
 };
 
 // 준비와 예상량만 계산한다 (Claude 는 부르지 않음)
@@ -150,7 +182,11 @@ const prepareOnly = async (
   options: { context?: Partial<JobContext>; links?: PreparedLink[] } = {},
 ) => {
   const { llm, parses, writes } = fakeLlm(PLAN, ANALYSIS, MARKDOWN);
-  const pipeline = createClaudePipeline({ llm, fetchLinks: async () => options.links ?? LINKS });
+  const pipeline = createClaudePipeline({
+    llm,
+    fetchLinks: async () => options.links ?? LINKS,
+    remainingTimeMs: () => 300_000,
+  });
   const input: PipelineInput = {
     context: { ...CONTEXT, ...options.context },
     commits: COMMITS,
@@ -173,7 +209,7 @@ describe('createClaudePipeline', () => {
     assert.ok(!markdown.includes('{{'));
     assert.deepEqual(
       parses.map(({ effort, maxTokens }) => [effort, maxTokens]),
-      [['low', 8_000], ['medium', 16_000]],
+      [['low', 8_000], ['medium', 16_000], ['low', 4_000]],
     );
     assert.deepEqual(
       writes.map(({ effort, maxTokens }) => [effort, maxTokens]),
@@ -295,6 +331,8 @@ describe('createClaudePipeline', () => {
           plan: estimateTokens(pack.plan.system),
           analyze: estimateTokens(pack.analyze.system),
           write: estimateTokens(pack.write.system),
+          review: estimateTokens(pack.review.system),
+          revise: estimateTokens(pack.revise.system),
         },
       ),
     );
@@ -302,7 +340,11 @@ describe('createClaudePipeline', () => {
 
   it('가린 hunk 본문은 예상량에 넣지 않는다', async () => {
     const { llm } = fakeLlm(PLAN, ANALYSIS, MARKDOWN);
-    const pipeline = createClaudePipeline({ llm, fetchLinks: async () => [] });
+    const pipeline = createClaudePipeline({
+      llm,
+      fetchLinks: async () => [],
+      remainingTimeMs: () => 300_000,
+    });
     const estimateFor = async (patch: string) => {
       const input: PipelineInput = {
         context: { ...CONTEXT, referenceUrls: [] },
@@ -342,7 +384,7 @@ describe('createClaudePipeline', () => {
     const { llm } = fakeLlm(PLAN, ANALYSIS, MARKDOWN);
     const { usage } = await run(llm);
 
-    assert.deepEqual(usage, [CALL_USAGE, CALL_USAGE, CALL_USAGE]);
+    assert.deepEqual(usage, [CALL_USAGE, CALL_USAGE, CALL_USAGE, CALL_USAGE]);
   });
 
   it('분석 단계는 검증한 분석을 저장용으로 한 번 넘긴다 (코드 원문·근거 없이, 상한을 넘은 빈칸 없이)', async () => {
@@ -362,5 +404,117 @@ describe('createClaudePipeline', () => {
     const text = JSON.stringify(stored);
     assert.ok(!text.includes('const b'), text);
     assert.ok(!text.includes('C1'), text);
+  });
+
+  describe('검토 단계', () => {
+    const ISSUE = { kind: 'unsupported', quote: '지연 로딩을 넣었다', fix: '근거 없는 단정을 줄인다' };
+    const REVISED = MARKDOWN.replace('지연 로딩을 넣었다', '이미지를 늦게 불러오도록 바꿨다');
+
+    it('검토에 문제가 없으면 고쳐 쓰지 않고 원래 초안을 조립한다', async () => {
+      const { llm, parses, writes } = fakeLlm(PLAN, ANALYSIS, MARKDOWN);
+      const { markdown, errors } = await run(llm);
+
+      assert.equal(parses.length, 3);
+      assert.equal(writes.length, 1);
+      assert.ok(markdown.includes('지연 로딩을 넣었다'));
+      assert.deepEqual(errors, []);
+    });
+
+    it('검토에 문제가 있으면 고쳐 쓴 초안을 조립한다', async () => {
+      const { llm, writes } = fakeLlm(PLAN, ANALYSIS, MARKDOWN, {
+        review: { issues: [ISSUE] },
+        revised: REVISED,
+      });
+      const { markdown, errors } = await run(llm);
+
+      assert.equal(writes.length, 2);
+      assert.ok(writes[1].user.includes('<issue kind='));
+      assert.ok(markdown.includes('이미지를 늦게 불러오도록 바꿨다'));
+      assert.ok(!markdown.includes('지연 로딩을 넣었다'));
+      assert.ok(markdown.includes('```ts'));
+      assert.deepEqual(errors, []);
+    });
+
+    it('검토 실패(timeout 포함)·고쳐 쓰기 실패·고쳐 쓴 초안 거절이면 원래 초안을 조립하고 reportError 를 부른다', async () => {
+      const reviewFails = fakeLlm(PLAN, ANALYSIS, MARKDOWN, {
+        review: new GenerationFailure('timeout'),
+      });
+      const reviewResult = await run(reviewFails.llm);
+      assert.ok(reviewResult.markdown.includes('지연 로딩을 넣었다'));
+      assert.equal((reviewResult.errors[0] as GenerationFailure).code, 'timeout');
+
+      const reviseFails = fakeLlm(PLAN, ANALYSIS, MARKDOWN, {
+        review: { issues: [ISSUE] },
+        revised: new Error('network down'),
+      });
+      const reviseResult = await run(reviseFails.llm);
+      assert.ok(reviseResult.markdown.includes('지연 로딩을 넣었다'));
+      assert.equal(reviseResult.errors.length, 1);
+
+      const rejected = fakeLlm(PLAN, ANALYSIS, MARKDOWN, {
+        review: { issues: [ISSUE] },
+        revised: REVISED.replace('{{code:S1}}', ''),
+      });
+      const rejectedResult = await run(rejected.llm);
+      assert.ok(rejectedResult.markdown.includes('지연 로딩을 넣었다'));
+      assert.ok(rejectedResult.markdown.includes('```ts'));
+      assert.equal((rejectedResult.errors[0] as GenerationFailure).code, 'invalid_result');
+    });
+
+    it('reportError 가 없어도 검토 실패는 조용히 넘어간다', async () => {
+      const { llm } = fakeLlm(PLAN, ANALYSIS, MARKDOWN, { review: new Error('boom') });
+      const pipeline = createClaudePipeline({
+        llm,
+        fetchLinks: async () => LINKS,
+        remainingTimeMs: () => 300_000,
+      });
+      const input: PipelineInput = { context: CONTEXT, commits: COMMITS, onUsage: async () => {} };
+      const prepared = await pipeline.prepare(input);
+      const analyzed = await pipeline.analyze(input, await pipeline.classify(input, prepared));
+      const markdown = await pipeline.review(input, await pipeline.write(input, analyzed));
+
+      assert.ok(markdown.includes('지연 로딩을 넣었다'));
+    });
+
+    it('남은 시간이 60초 미만이면 검토를, 90초 미만이면 고쳐 쓰기를 부르지 않는다', async () => {
+      const noReview = fakeLlm(PLAN, ANALYSIS, MARKDOWN, { review: { issues: [ISSUE] } });
+      const first = await run(noReview.llm, { remainingTimeMs: () => 59_999 });
+      assert.equal(noReview.parses.length, 2);
+      assert.equal(noReview.writes.length, 1);
+      assert.ok(first.markdown.includes('지연 로딩을 넣었다'));
+
+      const noRevise = fakeLlm(PLAN, ANALYSIS, MARKDOWN, {
+        review: { issues: [ISSUE] },
+        revised: REVISED,
+      });
+      const second = await run(noRevise.llm, { remainingTimeMs: () => 89_999 });
+      assert.equal(noRevise.parses.length, 3);
+      assert.equal(noRevise.writes.length, 1);
+      assert.ok(second.markdown.includes('지연 로딩을 넣었다'));
+    });
+
+    it('바깥 펜스로 감싼 작성 결과도 검토 quote 를 찾아 고쳐 쓴다', async () => {
+      const fenced = `\`\`\`markdown\n${MARKDOWN}\n\`\`\``;
+      const { llm, writes } = fakeLlm(PLAN, ANALYSIS, fenced, {
+        // quote 가 펜스를 푼 초안의 첫 줄이라 펜스가 남아 있으면 찾지 못한다
+        review: { issues: [{ ...ISSUE, quote: '# 지연 로딩' }] },
+        revised: REVISED,
+      });
+      const { markdown } = await run(llm);
+
+      assert.equal(writes.length, 2);
+      assert.ok(markdown.includes('이미지를 늦게 불러오도록 바꿨다'));
+      assert.ok(!markdown.includes('```markdown'));
+    });
+
+    it('검토·고쳐 쓰기 사용량도 onUsage 로 보고한다', async () => {
+      const { llm } = fakeLlm(PLAN, ANALYSIS, MARKDOWN, {
+        review: { issues: [ISSUE] },
+        revised: REVISED,
+      });
+      const { usage } = await run(llm);
+
+      assert.equal(usage.length, 5);
+    });
   });
 });

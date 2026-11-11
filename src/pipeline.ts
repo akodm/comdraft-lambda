@@ -1,8 +1,13 @@
 import type { CommitDetail } from './github.ts';
 import type { JobContext } from './jobs.ts';
-import { assemble } from './generation/assemble.ts';
+import { GenerationFailure } from './errors.ts';
+import { assemble, unwrapOuterFence } from './generation/assemble.ts';
 import { estimateJobTokens } from './generation/estimate.ts';
-import { estimateTokens } from './generation/limits.ts';
+import {
+  estimateTokens,
+  REVIEW_MIN_REMAINING_MS,
+  REVISE_MIN_REMAINING_MS,
+} from './generation/limits.ts';
 import { fetchReferenceLinks, type PreparedLink } from './generation/links.ts';
 import type { LlmClient } from './generation/llm.ts';
 import {
@@ -12,6 +17,7 @@ import {
   type PreparedCommit,
   type PreparedHunk,
 } from './generation/prepare.ts';
+import { acceptRevision, ReviewSchema, validateReview } from './generation/review.ts';
 import {
   AnalysisSchema,
   PlanSchema,
@@ -24,8 +30,9 @@ import { getPromptPack } from './prompts/index.ts';
 import { renderCatalog, resolveOptions } from './prompts/render.ts';
 
 /**
- * 준비 → (예상량 검사) → 구분 → 분석 → 작성 단계
- * - 각 단계는 앞 단계 결과를 받아 메모리에서만 넘기고, 마지막 작성 결과(Markdown)만 저장됨
+ * 준비 → (예상량 검사) → 구분 → 분석 → 작성 → 검토 단계
+ * - 각 단계는 앞 단계 결과를 받아 메모리에서만 넘기고, 마지막 검토 단계가 조립한 결과(Markdown)만 저장됨
+ * - 검토는 독자 기준으로 초안을 점검하고, 문제가 있을 때만 고쳐 써서 조립 (어느 단계든 실패하면 원래 초안을 씀)
  * - createClaudePipeline 이 실제 구현이고, 임시 구현은 placeholder-pipeline.ts 에 있음
  */
 
@@ -38,7 +45,7 @@ export interface PipelineInput {
   onAnalysis?: (analysis: StoredAnalysis) => Promise<void>;
 }
 
-export interface Pipeline<P = unknown, C = unknown, A = unknown> {
+export interface Pipeline<P = unknown, C = unknown, A = unknown, W = unknown> {
   // 준비: Claude 를 부르기 전에 커밋·참고 링크를 정리
   prepare: (input: PipelineInput) => Promise<P>;
   // 준비물로 작업 전체의 토큰 예상량 계산 (할당량 검사용)
@@ -47,8 +54,10 @@ export interface Pipeline<P = unknown, C = unknown, A = unknown> {
   classify: (input: PipelineInput, prepared: P) => Promise<C>;
   // 2단계: 구분 결과를 바탕으로 변경 내용 분석
   analyze: (input: PipelineInput, classified: C) => Promise<A>;
-  // 3단계: 분석 결과로 글 초안(Markdown) 작성
-  write: (input: PipelineInput, analyzed: A) => Promise<string>;
+  // 3단계: 분석 결과로 글 초안(Markdown, 자리표시자 형태) 작성
+  write: (input: PipelineInput, analyzed: A) => Promise<W>;
+  // 4단계: 초안을 독자 기준으로 검토하고 필요할 때만 고쳐 쓴 뒤 조립해 최종 Markdown 을 만든다
+  review: (input: PipelineInput, written: W) => Promise<string>;
 }
 
 // Claude 를 부르기 전 준비물 (뒤 단계가 같은 준비물을 다시 만들지 않도록 계속 함께 넘김)
@@ -67,12 +76,23 @@ export interface Analyzed extends Classified {
   analysis: Analysis;
 }
 
+// 작성 단계 결과: 아직 조립하지 않은 초안과 작성에 쓴 hunk
+export interface Written extends Analyzed {
+  draft: string;
+  selected: Map<string, PreparedHunk>;
+}
+
 export interface ClaudePipelineDependencies {
   llm: LlmClient;
   fetchLinks: (urls: string[]) => Promise<PreparedLink[]>;
+  // Lambda 남은 실행 시간 (검토·고쳐 쓰기를 건너뛸지 정함)
+  remainingTimeMs: () => number;
+  // 검토 단계 실패 보고 (없으면 조용히 넘어감)
+  reportError?: (error: unknown) => void;
 }
 
 const PLAN_STAGE = { effort: 'low', maxTokens: 8_000 } as const;
+const REVIEW_STAGE = { effort: 'low', maxTokens: 4_000 } as const;
 const WORK_STAGE = { effort: 'medium', maxTokens: 16_000 } as const;
 
 // 링크는 글의 보조 근거라 가져오기에 실패해도 작업을 멈추지 않는다
@@ -106,6 +126,8 @@ const estimatePrepared = (context: JobContext, { commits, hunks, links }: Prepar
       plan: estimateTokens(pack.plan.system),
       analyze: estimateTokens(pack.analyze.system),
       write: estimateTokens(pack.write.system),
+      review: estimateTokens(pack.review.system),
+      revise: estimateTokens(pack.revise.system),
     },
   );
 };
@@ -113,7 +135,9 @@ const estimatePrepared = (context: JobContext, { commits, hunks, links }: Prepar
 export const createClaudePipeline = ({
   llm,
   fetchLinks,
-}: ClaudePipelineDependencies): Pipeline<Prepared, Classified, Analyzed> => ({
+  remainingTimeMs,
+  reportError,
+}: ClaudePipelineDependencies): Pipeline<Prepared, Classified, Analyzed, Written> => ({
   prepare: async ({ context, commits: details }) => {
     const commits = prepareCommits(details);
     const hunks = indexHunks(commits);
@@ -189,15 +213,62 @@ export const createClaudePipeline = ({
       ).map((hunk) => [hunk.id, hunk]),
     );
 
-    const markdown = await llm.write({
+    const draft = await llm.write({
       system: pack.write.system,
       user: pack.write.user({ context, plan, analysis, hunks: selected, links }),
       onUsage,
       ...WORK_STAGE,
     });
 
+    return { ...analyzed, draft, selected };
+  },
+
+  review: async ({ context, onUsage }, written) => {
+    const pack = getPromptPack(context.locale);
+    const { commits, links, plan, analysis, selected } = written;
+    // 검토 quote 가 초안에서 찾아지도록 작성이 감싼 바깥 펜스를 먼저 푼다
+    const draft = unwrapOuterFence(written.draft);
+    const base = { context, plan, analysis, hunks: selected, links, draft };
+    let final = draft;
+
+    // 검토는 덤이라 어느 단계가 실패해도 원래 초안으로 조립한다
+    try {
+      if (remainingTimeMs() >= REVIEW_MIN_REMAINING_MS) {
+        const raw = await llm.parse({
+          system: pack.review.system,
+          user: pack.review.user(base),
+          schema: ReviewSchema,
+          onUsage,
+          ...REVIEW_STAGE,
+        });
+        const issues = validateReview(raw, draft);
+
+        if (issues.length > 0 && remainingTimeMs() >= REVISE_MIN_REMAINING_MS) {
+          const revised = await llm.write({
+            system: pack.revise.system,
+            user: pack.revise.user({ ...base, issues }),
+            onUsage,
+            ...WORK_STAGE,
+          });
+          const accepted = acceptRevision(
+            draft,
+            revised,
+            new Set(links.map((link) => link.id)),
+          );
+
+          if (accepted) {
+            final = accepted;
+          } else {
+            reportError?.(new GenerationFailure('invalid_result'));
+          }
+        }
+      }
+    } catch (error) {
+      reportError?.(error);
+    }
+
     return assemble({
-      markdown,
+      markdown: final,
       analysis,
       commits,
       hunks: selected,

@@ -174,6 +174,7 @@ const createUsagePipeline = (
       await stage('write', onUsage);
       return '# 결과';
     },
+    review: async (_input, written) => `${written}\n\n검토 뒤`,
   };
 
   return { pipeline, stages };
@@ -197,6 +198,21 @@ describe('runJob', () => {
 
     assert.equal(await runJob('job-1', dependencies), 'skipped');
     assert.equal(signals.length, 0);
+  });
+
+  it('작성 뒤 검토 결과를 저장하고 단계는 1, 2 만 기록한다 (3 은 완료 경로)', async () => {
+    const { pipeline } = createUsagePipeline({ classify: 1_000, analyze: 2_000, write: 3_000 });
+    const { dependencies, state } = createDependencies({ pipeline });
+    const steps: number[] = [];
+    const markStep = dependencies.jobs.markStep;
+    dependencies.jobs.markStep = async (jobId, step) => {
+      steps.push(step);
+      return markStep(jobId, step);
+    };
+
+    assert.equal(await runJob('job-1', dependencies), 'completed');
+    assert.equal(state.result, '# 결과\n\n검토 뒤');
+    assert.deepEqual(steps, [1, 2]);
   });
 
   it('작업의 초안이 삭제돼 맥락이 없으면 Claude 호출 없이 internal 로 실패한다', async () => {
@@ -435,6 +451,7 @@ describe('runJob (분석 저장)', () => {
       await onAnalysis?.(STORED);
     },
     write: async () => '# 결과',
+    review: async (_input, written) => written as string,
   });
 
   it('초안 작성 작업은 분석 단계 뒤 분석을 저장한다', async () => {
