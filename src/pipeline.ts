@@ -1,6 +1,7 @@
 import type { CommitDetail } from './github.ts';
 import type { JobContext } from './jobs.ts';
 import { GenerationFailure } from './errors.ts';
+import { alignDraftToPlan } from './generation/align.ts';
 import { assemble, unwrapOuterFence } from './generation/assemble.ts';
 import { estimateJobTokens } from './generation/estimate.ts';
 import {
@@ -241,12 +242,14 @@ export const createClaudePipeline = ({
       ).map((hunk) => [hunk.id, hunk]),
     );
 
-    const draft = await llm.write({
+    const written = await llm.write({
       system: pack.write.system,
       user: pack.write.user({ context, plan, analysis, hunks: selected, links }),
       onUsage,
       ...WORK_STAGE,
     });
+    // 계획에 없이 덧붙인 절을 덜어 내고 제목 수준을 계획대로 맞춘다 (검토·고쳐 쓰기도 이 초안을 기준으로 한다)
+    const draft = alignDraftToPlan(unwrapOuterFence(written), plan.sections);
 
     return { ...analyzed, draft, selected };
   },
