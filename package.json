@@ -4,13 +4,10 @@
   "private": true,
   "description": "comdraft AI 초안 작성 Lambda (구분 → 분석 → 작성)",
   "type": "module",
+  "packageManager": "pnpm@11.24.0",
   "engines": {
-    "node": ">=22.19"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "esbuild"
-    ]
+    "node": ">=22.19",
+    "pnpm": ">=11.24.0"
   },
   "scripts": {
     "build": "esbuild src/handler.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist/index.mjs --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\" && pnpm smoke",
