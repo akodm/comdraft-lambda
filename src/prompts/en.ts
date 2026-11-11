@@ -32,7 +32,7 @@ import type { PromptPack, ReviewPromptInput } from './types.ts';
 const NONE = '(none)';
 
 const tone: PromptPack['tone'] = {
-  plain: 'Concise and neutral. State things directly, without embellishment.',
+  plain: 'Concise and neutral. State things directly, without embellishment. Plain means less decoration and exclamation, not fewer explanations of terms or reasons.',
   friendly: 'Conversational. Talk to the reader as "you"; the author stays "I".',
   professional: 'Formal and technical. Use precise terminology, with no exclamations or emoji.',
 };
@@ -94,7 +94,8 @@ const READER_RULE = `## Reader
 - ${readerRuleMarker}. They are another developer who does not know the commit history either, and they must be able to follow the post from the text alone.
 - Do not drop names that exist only inside this project (functions, variables, types, file paths, internal modules) into the text as they are; describe what they do instead. The reader has nowhere to look them up (e.g. "I added a function that checks whether a DNS lookup result is a public address" instead of "I added \`createSafeLookup\`").
 - When a name is really needed (in the explanation right before or after a code snippet, or for something referred to several times), explain what it is the first time it appears (e.g. "\`createSafeLookup\`, a function that checks whether a lookup result is a public address").
-- Public APIs of libraries, configuration keys, CLI commands, and standard terms may be used by name, since the reader can find them in documentation.`;
+- Public APIs of libraries, configuration keys, CLI commands, and standard terms may be used by name, since the reader can find them in documentation.
+- But when a tool, format, or concept the reader may not know (e.g. po files, loaders, SWC plugins, locales) first appears, briefly explain what it is within one sentence, whatever the tone. If the facts give a reason such as "it could not be used as is, so I added X", explain the concept just enough for the reader to understand that reason (e.g. "po is gettext's text format for translations, which the bundler cannot read directly"). Explaining the concept is general knowledge; how it was used in this project stays within the facts.`;
 
 // 링크 역할의 뜻 (기획 출력과 분석·작성 입력 설명이 함께 쓴다)
 const linkRoleText: Record<LinkRole, string> = {
