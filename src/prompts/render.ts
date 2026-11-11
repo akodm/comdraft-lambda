@@ -237,9 +237,28 @@ export const buildCodeLines = (
   mode: Analysis['code'][number]['mode'],
 ): string[] => {
   const lines = hunk.lines.slice(startLine - 1, endLine);
-  return mode === 'diff'
-    ? lines
-    : lines.filter((line) => !line.startsWith('-')).map((line) => line.slice(1));
+  if (mode === 'diff') {
+    const indent = commonIndent(lines.map((line) => line.slice(1)));
+    return lines.map((line) => line[0] + line.slice(1 + Math.min(indent, leadingWhitespace(line.slice(1)).length)));
+  }
+  const code = lines.filter((line) => !line.startsWith('-')).map((line) => line.slice(1));
+  const indent = commonIndent(code);
+  return code.map((line) => line.slice(Math.min(indent, leadingWhitespace(line).length)));
+};
+
+const leadingWhitespace = (line: string): string => /^[ \t]*/.exec(line)![0];
+
+// 빈 줄을 뺀 모든 줄이 같은 문자로 시작하는 들여쓰기 길이 (블록 중간에서 고른 조각이 깊이 밀려 보이지 않게)
+const commonIndent = (lines: string[]): number => {
+  const indents = lines.filter((line) => line.trim() !== '').map(leadingWhitespace);
+  if (indents.length === 0) return 0;
+  let common = indents[0];
+  for (const indent of indents.slice(1)) {
+    let i = 0;
+    while (i < common.length && i < indent.length && common[i] === indent[i]) i += 1;
+    common = common.slice(0, i);
+  }
+  return common.length;
 };
 
 // 사실의 링크 출처. 커밋 출처는 분석 단계의 내부 근거로만 쓰고 작성 단계에 넘기지 않는다

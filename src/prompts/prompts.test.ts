@@ -1191,6 +1191,18 @@ describe('render', () => {
     assert.deepEqual(buildCodeLines(lines, 2, 4, 'diff'), ['-gone', '+added', ' tail']);
   });
 
+  it('buildCodeLines 는 조각 전체에 공통인 들여쓰기를 걷어 낸다 (diff 는 접두사 뒤에서)', () => {
+    // 실제 배포 초안: JSX 조각이 8칸 들여쓰기 그대로 실렸다
+    const lines = hunk('C1.F1.H1', ['+        <Provider', '+          locale={lang}', '+', '-        </Old>', '+        </Provider>']);
+    assert.deepEqual(buildCodeLines(lines, 1, 5, 'after'), ['<Provider', '  locale={lang}', '', '</Provider>']);
+    assert.deepEqual(buildCodeLines(lines, 1, 5, 'diff'), ['+<Provider', '+  locale={lang}', '+', '-</Old>', '+</Provider>']);
+    const tabs = hunk('C1.F1.H2', ['+\t\tif x {', '+\t\t\ty()', '+\t\t}']);
+    assert.deepEqual(buildCodeLines(tabs, 1, 3, 'after'), ['if x {', '\ty()', '}']);
+    // 들여쓰기 문자가 섞이면 공통 부분만 걷어 낸다
+    const mixed = hunk('C1.F1.H3', ['+  a', '+\tb']);
+    assert.deepEqual(buildCodeLines(mixed, 1, 2, 'after'), ['  a', '\tb']);
+  });
+
   it('renderLinks 는 미리보기일 때 본문 앞부분만 넣는다', () => {
     const preview = renderLinks([link], { preview: true });
     assert.ok(!preview.includes(link.text));
