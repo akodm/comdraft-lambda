@@ -161,6 +161,48 @@ describe('validateAnalysis', () => {
     assert.deepEqual(out.code.map((c) => c.id), ['S1', 'S7']);
   });
 
+  it('블록 중간에서 끝나는 코드 조각은 괄호가 닫힐 때까지 늘린다 (40줄과 hunk 끝을 넘지 않음)', () => {
+    // 실제 비교 실행: 라우터 훅 코드가 `refresh: () => {` 에서 잘렸다
+    const code: PreparedHunk = {
+      id: 'C1.F1.H1',
+      header: '@@',
+      lines: [
+        '+export default function useRouterWrap() {',
+        "+  const label = '{ 문자열 속 괄호 }';",
+        '+  return {',
+        '+    push: () => {',
+        '+      go();',
+        '+    },',
+        '+  };',
+        '+}',
+        '+// 다음 코드',
+      ],
+      redacted: false,
+      language: 'ts',
+    };
+    const pick = (id: string, s: number, e: number) => ({
+      id, section: 0, from: 'C1.F1.H1', startLine: s, endLine: e, mode: 'after' as const, point: 'p',
+    });
+    const long: PreparedHunk = { ...code, id: 'C1.F1.H2', lines: ['+function f() {', ...Array.from({ length: 50 }, () => '+  x();'), '+}'] };
+    const out = validateAnalysis(
+      {
+        ...empty,
+        code: [
+          pick('S1', 1, 4),
+          // 이미 닫힌 조각은 그대로
+          pick('S2', 9, 9),
+          // 40줄 안에서 닫을 수 없으면 그대로 둔다
+          { ...pick('S3', 1, 10), from: 'C1.F1.H2' },
+        ],
+      },
+      ctxFor(p, [code, long]),
+    );
+    assert.deepEqual(
+      out.code.map((c) => [c.id, c.startLine, c.endLine]),
+      [['S1', 1, 8], ['S2', 9, 9], ['S3', 1, 10]],
+    );
+  });
+
   it('같은 hunk 에서 앞 조각과 줄이 겹치는 조각은 버린다 (표시 방식이 달라도)', () => {
     const pick = (id: string, from: string, s: number, e: number, mode: 'after' | 'diff' = 'after') => ({
       id,

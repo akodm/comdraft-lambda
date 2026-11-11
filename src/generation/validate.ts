@@ -125,6 +125,35 @@ const isValidCodePick = (
 
 type CodePick = RawAnalysis['code'][number];
 
+// 따옴표 안의 글자는 괄호로 세지 않는다 (문자열 속 '{' 때문에 잘못 늘리지 않게)
+const STRING_LITERAL = /(['"`])(?:\\.|(?!\1).)*\1/g;
+
+// 여는 괄호 수 - 닫는 괄호 수 (+, - 표시와 앞 공백 한 칸을 뗀 줄 기준)
+const bracketBalance = (lines: string[]): number =>
+  lines.reduce((balance, line) => {
+    const code = line.slice(1).replace(STRING_LITERAL, '');
+    const opens = (code.match(/[{([]/g) ?? []).length;
+    const closes = (code.match(/[})\]]/g) ?? []).length;
+    return balance + opens - closes;
+  }, 0);
+
+// 글에 보이는 줄 (after 는 삭제 줄을 뺀다, buildCodeLines 와 같은 기준)
+const visibleLines = (hunk: PreparedHunk, pick: CodePick, endLine: number): string[] => {
+  const lines = hunk.lines.slice(pick.startLine - 1, endLine);
+  return toCodeMode(pick.mode) === 'diff' ? lines : lines.filter((line) => !line.startsWith('-'));
+};
+
+// 블록 중간에서 끝나는 조각은 괄호가 닫힐 때까지 끝줄을 늘린다 (hunk 끝과 MAX_CODE_LINES 안에서만, 못 닫으면 그대로)
+const closeOpenBlock = (pick: CodePick, hunks: Map<string, PreparedHunk>): CodePick => {
+  const hunk = hunks.get(pick.from) as PreparedHunk;
+  if (bracketBalance(visibleLines(hunk, pick, pick.endLine)) <= 0) return pick;
+  const lastLine = Math.min(hunk.lines.length, pick.startLine + MAX_CODE_LINES - 1);
+  for (let endLine = pick.endLine + 1; endLine <= lastLine; endLine += 1) {
+    if (bracketBalance(visibleLines(hunk, pick, endLine)) <= 0) return { ...pick, endLine };
+  }
+  return pick;
+};
+
 // 같은 hunk 에서 앞 조각과 줄 범위가 겹치는 조각을 버린다 (같은 코드가 글에 두 번 실리지 않게, 표시 방식과 무관)
 const dropOverlappingPicks = (picks: CodePick[]): CodePick[] => {
   const kept: CodePick[] = [];
@@ -176,7 +205,9 @@ export const validateAnalysis = (
     .filter((fact) => fact.evidence.length > 0);
 
   const code = dropOverlappingPicks(
-    analysis.code.filter((pick) => inRange(pick.section) && isValidCodePick(pick, ctx.hunks)),
+    analysis.code
+      .filter((pick) => inRange(pick.section) && isValidCodePick(pick, ctx.hunks))
+      .map((pick) => closeOpenBlock(pick, ctx.hunks)),
   ).map((pick) => ({ ...pick, mode: toCodeMode(pick.mode) }));
 
   const unknowns = analysis.unknowns
