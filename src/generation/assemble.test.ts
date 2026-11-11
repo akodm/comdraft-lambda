@@ -632,8 +632,30 @@ describe('sanitizeFill', () => {
     assert.equal(fill('3초에서 0.4초로 줄었고 `useLazyImage` 2개를 썼다.'), '3초에서 0.4초로 줄었고 `useLazyImage` 2개를 썼다.');
   });
 
+  it('전체를 감싼 markdown 또는 언어 없는 코드 펜스는 풀고 정리한다', () => {
+    assert.equal(fill('```markdown\n첫 문단이다.\n\n둘째 문단이다.\n```'), '첫 문단이다.\n\n둘째 문단이다.');
+    assert.equal(fill('\n  ```md\n# 제목\n\n문단이다.\n```  \n'), '문단이다.');
+    assert.equal(fill('```\n문단이다.\n```'), '문단이다.');
+    assert.equal(fill('~~~markdown\n문단이다.\n~~~'), '문단이다.');
+  });
+
+  it('펜스를 풀어도 안의 코드 블록과 링크는 그대로 무력화한다', () => {
+    const out = fill('````markdown\n앞 문단이다.\n\n```ts\nconst secret = 1;\n```\n\n[여기](https://evil.example)\n````');
+    assert.ok(!out.includes('secret') && !out.includes('evil.example'), out);
+    assert.ok(out.startsWith('앞 문단이다.'), out);
+    assert.ok(!types(out).includes('link'), out);
+  });
+
+  it('전체를 감싸지 않았거나 다른 언어의 펜스는 풀지 않는다', () => {
+    assert.equal(fill('앞 문단이다.\n\n```markdown\n안쪽\n```'), '앞 문단이다.');
+    assert.throws(
+      () => fill('```ts\nconst a = 1;\n```'),
+      (error) => error instanceof GenerationFailure && error.code === 'invalid_result',
+    );
+  });
+
   it('정리 후 글이 남지 않으면 invalid_result 로 실패한다', () => {
-    for (const markdown of ['', '# 제목만', '```\ncode\n```', '{{target}}']) {
+    for (const markdown of ['', '# 제목만', '```ts\ncode\n```', '```markdown\n```', '{{target}}']) {
       assert.throws(
         () => fill(markdown),
         (error) => error instanceof GenerationFailure && error.code === 'invalid_result',

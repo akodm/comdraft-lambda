@@ -469,14 +469,32 @@ const DROPPED_LINE = [
 // 줄머리의 인용 표시, 글머리 기호, 들여쓰기 (번호 목록 표시는 뒤에서 글자로 남긴다)
 const LEADING_CONTAINER = /^(?:[ \t]*(?:>|[-*+](?=[ \t]|$)))*[ \t]*/;
 
+// 글 전체를 감싼 바깥 펜스 (markdown·md 이거나 언어 없는 것만)
+const OUTER_FENCE_OPEN = /^(`{3,}|~{3,})[ \t]*(?:markdown|md)?[ \t]*$/i;
+
+// 같은 울타리로 닫히는 줄인가 (같은 문자, 같거나 긴 길이)
+const closesFence = (line: string, fence: string): boolean => {
+  const close = FENCE_CLOSE.exec(line)?.[1];
+  return Boolean(close && close[0] === fence[0] && close.length >= fence.length);
+};
+
+// 모델이 글 전체를 코드 펜스 하나로 감싸 보냈으면 펜스만 벗긴다 (안쪽은 그대로 정리를 거친다)
+const unwrapOuterFence = (markdown: string): string => {
+  const lines = markdown.replace(/\r\n?/g, '\n').trim().split('\n');
+  const fence = OUTER_FENCE_OPEN.exec(lines[0])?.[1];
+  if (!fence || lines.length < 2 || !closesFence(lines[lines.length - 1], fence)) return markdown;
+  const inner = lines.slice(1, -1);
+  // 안에서 먼저 닫히면 펜스 하나로 감싼 글이 아니다 (코드 블록 여러 개)
+  return inner.some((line) => closesFence(line, fence)) ? markdown : inner.join('\n');
+};
+
 // 코드 블록(울타리와 내용, 닫히지 않으면 끝까지)과 블록 요소 줄을 지운다. 줄머리는 이미 납작하다.
 const dropBlockLines = (text: string): string => {
   const kept: string[] = [];
   let fence: string | null = null;
   for (const line of text.split('\n')) {
     if (fence !== null) {
-      const close = FENCE_CLOSE.exec(line)?.[1];
-      if (close && close[0] === fence[0] && close.length >= fence.length) fence = null;
+      if (closesFence(line, fence)) fence = null;
       continue;
     }
     const open = FENCE_OPEN.exec(line)?.[1];
@@ -525,7 +543,7 @@ export const sanitizeFill = (markdown: string, evidence: string): string => {
 
 const sanitizeFillUnsafe = (markdown: string, evidence: string): string => {
   const store: Store = { blocks: [], links: [], spans: [], cited: new Set() };
-  const flat = markdown
+  const flat = unwrapOuterFence(markdown)
     .replace(/\r\n?/g, '\n')
     .replace(MARKER_CHARS, '')
     .replace(ANY_PLACEHOLDER, ' ')
