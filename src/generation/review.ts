@@ -32,12 +32,14 @@ export const validateReview = (raw: RawReview, draft: string): ReviewIssue[] => 
   const issues: ReviewIssue[] = [];
   for (const item of raw.issues) {
     if (!isKind(item.kind)) continue;
-    const quote = collapse(item.quote);
+    // 프롬프트 입력에서 escape 한 `<` 를 모델이 그대로 베낀 경우를 되돌린다
+    const restored = item.quote.replaceAll('&lt;', '<');
+    const quote = collapse(restored);
     const fix = item.fix.trim().slice(0, REVIEW_FIX_MAX).trim();
     if (!quote || !fix || seen.has(quote)) continue;
     if (!collapse(quote.replace(PLACEHOLDER, '')) || !flatDraft.includes(quote)) continue;
     seen.add(quote);
-    issues.push({ kind: item.kind, quote: item.quote, fix });
+    issues.push({ kind: item.kind, quote: restored, fix });
     if (issues.length >= MAX_REVIEW_ISSUES) break;
   }
   return issues;
@@ -57,11 +59,22 @@ const countPlaceholders = (text: string, kinds: string[]): Map<string, number> =
 const sameCounts = (a: Map<string, number>, b: Map<string, number>): boolean =>
   a.size === b.size && [...a].every(([key, n]) => b.get(key) === n);
 
+// 제목 수준(#의 개수) 순서 (자리표시자 초안에는 코드 펜스가 없어 줄 단위로 읽는다)
+const headingLevels = (text: string): number[] =>
+  text.split('\n').flatMap((line) => {
+    const match = /^(#{1,6})(?=\s|$)/.exec(line);
+    return match ? [match[1].length] : [];
+  });
+
+const sameLevels = (a: number[], b: number[]): boolean =>
+  a.length === b.length && a.every((level, i) => level === b[i]);
+
 // 고쳐 쓴 초안이 안전하면 (바깥 펜스를 푼) 본문을, 아니면 null 을 돌려준다
 export const acceptRevision = (draft: string, revised: string, linkIds: Set<string>): string | null => {
   const text = unwrapOuterFence(revised);
   if (!text.trim() || !text.trimStart().startsWith('# ')) return null;
   if (!sameCounts(countPlaceholders(draft, ['code', 'ask']), countPlaceholders(text, ['code', 'ask']))) return null;
+  if (!sameLevels(headingLevels(draft), headingLevels(text))) return null;
   for (const key of countPlaceholders(text, ['link']).keys()) {
     if (!linkIds.has(key.slice('link:'.length))) return null;
   }

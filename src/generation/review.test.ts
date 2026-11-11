@@ -25,7 +25,7 @@ describe('validateReview', () => {
   });
 
   it('모르는 kind, 중복 quote, 자리표시자만 있는 quote, 빈 fix 를 버리고 8개로 자른다', () => {
-    const lines = Array.from({ length: 10 }, (_, i) => `문장${i}`);
+    const lines = Array.from({ length: 12 }, (_, i) => `문장${i}`);
     const draft = lines.join('\n');
     const issues = validateReview(
       {
@@ -33,7 +33,7 @@ describe('validateReview', () => {
           { kind: 'bogus', quote: '문장0', fix: 'x' },
           { kind: 'voice', quote: '문장1', fix: 'x' },
           { kind: 'flow', quote: '문장1', fix: 'y' },
-          { kind: 'voice', quote: '{{ code : S1 }}', fix: 'x' },
+          { kind: 'voice', quote: '{{code:S1}}', fix: 'x' },
           { kind: 'voice', quote: '문장2', fix: '   ' },
           { kind: 'voice', quote: '   ', fix: 'x' },
           ...lines.slice(3).map((quote) => ({ kind: 'flow', quote, fix: 'x' })),
@@ -45,6 +45,14 @@ describe('validateReview', () => {
     assert.equal(issues[0].quote, '문장1');
     assert.equal(issues[0].fix, 'x');
     assert.ok(!issues.some((i) => i.quote === '문장0' || i.quote === '문장2'));
+  });
+
+  it('모델이 &lt; 를 그대로 베낀 quote 도 되돌려서 찾는다', () => {
+    const issues = validateReview(
+      { issues: [{ kind: 'unknown_term', quote: '`&lt;source>` 를 쓴다', fix: '풀어 쓴다' }] },
+      '# 제목\n\n`<source>` 를 쓴다',
+    );
+    assert.deepEqual(issues.map((i) => i.quote), ['`<source>` 를 쓴다']);
   });
 
   it('fix 는 앞뒤 공백을 빼고 150자로 자른다', () => {
@@ -75,6 +83,12 @@ describe('acceptRevision', () => {
       '   ',
     ])
       assert.equal(acceptRevision(DRAFT, revised, links), null);
+  });
+  it('제목을 빠뜨리거나 수준을 바꾸면 거절하고, 제목 글자만 바꾸면 받아들인다', () => {
+    assert.equal(acceptRevision(DRAFT, DRAFT.replace('## 설정\n\n', ''), links), null);
+    assert.equal(acceptRevision(DRAFT, DRAFT.replace('## 설정', '### 설정'), links), null);
+    const reworded = DRAFT.replace('## 설정', '## 설정을 바꾼 이유');
+    assert.equal(acceptRevision(DRAFT, reworded, links), reworded);
   });
   it('안쪽 공백이 있는 자리표시자도 같은 것으로 센다', () => {
     const revised = DRAFT.replace('{{code:S1}}', '{{ code : S1 }}');

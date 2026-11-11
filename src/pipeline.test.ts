@@ -331,8 +331,6 @@ describe('createClaudePipeline', () => {
           plan: estimateTokens(pack.plan.system),
           analyze: estimateTokens(pack.analyze.system),
           write: estimateTokens(pack.write.system),
-          review: estimateTokens(pack.review.system),
-          revise: estimateTokens(pack.revise.system),
         },
       ),
     );

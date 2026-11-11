@@ -126,8 +126,6 @@ const estimatePrepared = (context: JobContext, { commits, hunks, links }: Prepar
       plan: estimateTokens(pack.plan.system),
       analyze: estimateTokens(pack.analyze.system),
       write: estimateTokens(pack.write.system),
-      review: estimateTokens(pack.review.system),
-      revise: estimateTokens(pack.revise.system),
     },
   );
 };
@@ -238,7 +236,6 @@ export const createClaudePipeline = ({
       referencesHeading: pack.referencesHeading,
     };
     // 검토 결과로 쓸 초안 (고쳐 쓴 초안이 없거나 쓸 수 없으면 원래 초안)
-    let final = draft;
     let assembled: string | null = null;
 
     // 검토는 덤이라 LLM 단계(GenerationFailure)가 실패해도 원래 초안으로 조립한다
@@ -288,6 +285,6 @@ export const createClaudePipeline = ({
     }
 
     // 원래 초안을 조립하지 못하면 작업이 실패해야 하므로 어떤 대체 처리도 두지 않는다
-    return assembled ?? assemble({ ...assembleInput, markdown: final });
+    return assembled ?? assemble({ ...assembleInput, markdown: draft });
   },
 });

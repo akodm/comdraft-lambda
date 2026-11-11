@@ -162,6 +162,17 @@ describe('링크 역할 렌더링', () => {
   });
 });
 
+describe('링크 근거 문구', () => {
+  it('링크 본문을 "근거로만" 쓰라는 문구 대신 사실 범위를 한정하는 절을 둔다', () => {
+    const ko = getPromptPack('ko').analyze.system;
+    const en = getPromptPack('en').analyze.system;
+    assert.ok(!ko.includes('링크 본문은 그 문서가 설명하는 내용의 근거로만 쓴다'));
+    assert.ok(ko.includes('링크만 근거인 사실은 문서가 설명하는 내용까지만 쓴다'));
+    assert.ok(!en.includes("Use a link's body only as evidence"));
+    assert.ok(en.includes('A fact backed only by a link covers no more than what that document explains'));
+  });
+});
+
 describe('독자 기준과 요청·링크·빈칸 답 규칙', () => {
   it('기획·분석·작성·빈칸 채우기 system 은 독자 규칙을 담는다', () => {
     assert.equal(getPromptPack('ko').readerRuleMarker, '독자는 이 저장소와 코드, 요청 문구를 본 적이 없다');
