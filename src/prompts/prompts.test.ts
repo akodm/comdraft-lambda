@@ -88,6 +88,7 @@ const plan: Plan = {
     { level: 2, heading: '해결', purpose: '어떻게', hunks: ['C1.F1.H1'], links: ['L1'] },
   ],
   excludedCommits: [],
+  linkRoles: [{ id: 'L1', role: 'docs', relation: '설정 절차를 따른다' }],
 };
 
 const analysis: Analysis = {
@@ -115,6 +116,41 @@ const keyPaths = (value: unknown, prefix = ''): string[] => {
 };
 
 const packs: PromptPack[] = [getPromptPack('ko'), getPromptPack('en')];
+
+describe('링크 역할 렌더링', () => {
+  const second: PreparedLink = { ...link, id: 'L2', title: '글', url: 'https://example.com/b' };
+  const roles = [
+    ...plan.linkRoles,
+    { id: 'L2', role: 'other' as const, relation: '' },
+  ];
+
+  it('기획 입력의 링크 미리보기는 1,500자까지 보인다', () => {
+    const long = { ...link, text: '가'.repeat(2_000) };
+    const text = getPromptPack('ko').plan.user({ context: context(), commits, links: [long] });
+    assert.ok(text.includes(`${'가'.repeat(1_500)}…`));
+    assert.ok(!text.includes('가'.repeat(1_501)));
+  });
+
+  it('분석·작성 입력의 링크에 역할과 관계가 붙고, 관계가 비면 속성을 생략한다', () => {
+    const withRoles = { ...plan, linkRoles: roles };
+    const analyzed = getPromptPack('ko').analyze.user({
+      context: context(),
+      plan: withRoles,
+      commits,
+      hunks: [h1],
+      links: [link, second],
+    });
+    assert.ok(analyzed.includes('<link id="L1" role="docs" relation="설정 절차를 따른다">'));
+    assert.ok(analyzed.includes('<link id="L2" role="other">'));
+    const written = getPromptPack('en').write.user({
+      ...writeInput(),
+      plan: withRoles,
+      links: [link, second],
+    });
+    assert.ok(written.includes('<link id="L1" role="docs" relation="설정 절차를 따른다">'));
+    assert.ok(written.includes('<link id="L2" role="other">'));
+  });
+});
 
 describe('getPromptPack', () => {
   it('ko 와 en 은 같은 키 구조를 갖는다', () => {
@@ -297,7 +333,7 @@ describe('getPromptPack', () => {
     // after 모드는 삭제 줄을 빼고 접두사를 뗀다
     assert.ok(!text.includes('old();'));
     assert.match(text, /<blank id="U1" kind="motivation">계기는 무엇인가요<\/blank>/);
-    assert.match(text, /<link id="L1">Intersection Observer API<\/link>/);
+    assert.match(text, /<link id="L1" role="docs" relation="설정 절차를 따른다">Intersection Observer API<\/link>/);
     assert.ok(!text.includes(link.url));
   });
 

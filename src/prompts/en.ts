@@ -346,7 +346,7 @@ ${orNone(renderCommitMessages(commits))}
 ${hunks.length ? renderHunks(hunks, fileNames(commits)) : `${NONE} There are no hunks to read. Look for facts only in the commit messages, the request, and the links.`}
 
 ## Reference links
-${orNone(renderLinks(links, { preview: false }))}
+${orNone(renderLinks(links, { preview: false, roles: plan.linkRoles }))}
 
 For each section of the plan above, list the facts, code locations, and blanks.`,
   },
@@ -358,7 +358,7 @@ For each section of the plan above, list the facts, code locations, and blanks.`
 ${renderOutline(plan, analysis, hunks)}
 
 ## Reference links
-${links.length ? renderLinkTitles(links) : NONE}
+${links.length ? renderLinkTitles(links, plan.linkRoles) : NONE}
 
 Write the draft in Markdown from the material above. The first line is \`# title\`.`,
   },

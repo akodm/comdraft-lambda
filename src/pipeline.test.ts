@@ -59,6 +59,7 @@ const PLAN: Plan = {
     { level: 2, heading: '적용', purpose: '코드', hunks: ['C1.F1.H1', 'C9.F1.H1'], links: ['L1', 'L9'] },
   ],
   excludedCommits: [],
+  linkRoles: [],
 };
 
 const ANALYSIS: Analysis = {

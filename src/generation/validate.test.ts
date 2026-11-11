@@ -19,6 +19,7 @@ const plan = (sections: Plan['sections']): Plan => ({
   takeaway: 'k',
   sections,
   excludedCommits: [],
+  linkRoles: [],
 });
 
 const hunk = (id: string, count: number, redacted = false): PreparedHunk => ({
@@ -48,6 +49,35 @@ const ctxFor = (p: Plan, hunks: PreparedHunk[] = []) => ({
 const empty: Analysis = { facts: [], code: [], unknowns: [] };
 
 describe('validatePlan', () => {
+  const ctxLinks = (ids: string[]) => ({
+    hunkIds: new Set<string>(),
+    linkIds: new Set(ids),
+    length: 'medium',
+  });
+
+  it('linkRoles 는 모르는·중복 번호를 버리고 빠진 링크를 other 로 채워 입력 링크 순서로 둔다', () => {
+    const raw = {
+      ...plan([]),
+      linkRoles: [
+        { id: 'L2', role: 'docs', relation: '설정 절차를 따른다' },
+        { id: 'L9', role: 'docs', relation: '없는 링크' },
+        { id: 'L2', role: 'article', relation: '중복' },
+        { id: 'L1', role: 'weird', relation: `  ${'x'.repeat(200)}` },
+      ],
+    };
+    const out = validatePlan(raw, ctxLinks(['L1', 'L2', 'L3']));
+    assert.deepEqual(out.linkRoles, [
+      { id: 'L1', role: 'other', relation: 'x'.repeat(120) },
+      { id: 'L2', role: 'docs', relation: '설정 절차를 따른다' },
+      { id: 'L3', role: 'other', relation: '' },
+    ]);
+  });
+
+  it('링크가 없으면 linkRoles 는 빈 목록이다', () => {
+    const raw = { ...plan([]), linkRoles: [{ id: 'L1', role: 'docs', relation: 'x' }] };
+    assert.deepEqual(validatePlan(raw, ctxLinks([])).linkRoles, []);
+  });
+
   it('없는 hunk·link 를 빼고 절 수를 길이 범위로 자르고 level 건너뜀을 고친다', () => {
     const input = plan([
       section(2, { hunks: ['C1.F1.H1', 'C9.F1.H1'], links: ['L1', 'L7'] }),

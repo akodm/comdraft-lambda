@@ -2,7 +2,7 @@ import type { JobContext } from '../jobs.ts';
 import type { PreparedLink } from '../generation/links.ts';
 import { estimateTokens, LINK_PREVIEW_CHARS, PLAN_CATALOG_TOKENS } from '../generation/limits.ts';
 import type { PreparedCommit, PreparedFile, PreparedHunk } from '../generation/prepare.ts';
-import type { Analysis, Plan } from '../generation/schemas.ts';
+import type { Analysis, LinkRoleEntry, Plan } from '../generation/schemas.ts';
 import type { StoredAnalysis } from '../generation/stored-analysis.ts';
 import {
   LENGTHS,
@@ -171,13 +171,23 @@ const preview = (text: string): string => {
     : text;
 };
 
+// 링크의 역할·관계 속성. 기획이 정한 항목이 없으면 속성을 붙이지 않는다 (빈 관계는 attrs 가 생략한다).
+const roleAttrs = (id: string, roles: LinkRoleEntry[] | undefined): Record<string, string | undefined> => {
+  const entry = roles?.find((role) => role.id === id);
+  return { id, role: entry?.role, relation: entry?.relation };
+};
+
 // 참고 링크의 제목과 본문 (기획 단계는 앞부분만). URL 은 모델이 옮겨 쓰지 않도록 넣지 않는다.
-export const renderLinks = (links: PreparedLink[], options: { preview: boolean }): string =>
+// roles 를 주면 각 링크에 역할과 관계 속성을 붙인다.
+export const renderLinks = (
+  links: PreparedLink[],
+  options: { preview: boolean; roles?: LinkRoleEntry[] },
+): string =>
   links
     .map((link) =>
       element(
         'link',
-        { id: link.id },
+        roleAttrs(link.id, options.roles),
         [
           inline('title', {}, link.title),
           element('text', {}, escapeTagText(options.preview ? preview(link.text) : link.text)),
@@ -188,8 +198,12 @@ export const renderLinks = (links: PreparedLink[], options: { preview: boolean }
 
 // ---- 작성 단계: 절마다 사실, 코드, 빈칸을 모은 글 재료 ----
 
-export const renderLinkTitles = (links: PreparedLink[]): string =>
-  element('links', {}, links.map((link) => inline('link', { id: link.id }, link.title)).join('\n'));
+export const renderLinkTitles = (links: PreparedLink[], roles: LinkRoleEntry[]): string =>
+  element(
+    'links',
+    {},
+    links.map((link) => inline('link', roleAttrs(link.id, roles), link.title)).join('\n'),
+  );
 
 // 코드 조각의 실제 줄 (작성 프롬프트와 조립이 함께 쓴다)
 // after 는 삭제 줄을 빼고 접두사를 떼고, diff 는 접두사를 그대로 둔다. 줄 번호는 hunk 안에서 1부터, 양끝 포함.

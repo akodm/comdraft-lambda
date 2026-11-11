@@ -344,7 +344,7 @@ ${orNone(renderCommitMessages(commits))}
 ${hunks.length ? renderHunks(hunks, fileNames(commits)) : `${NONE} 읽을 hunk 가 없다. 사실은 커밋 메시지, 요청, 링크에서만 찾는다.`}
 
 ## 참고 링크
-${orNone(renderLinks(links, { preview: false }))}
+${orNone(renderLinks(links, { preview: false, roles: plan.linkRoles }))}
 
 위 기획의 절마다 사실, 코드 위치, 빈칸을 정리해 주세요.`,
   },
@@ -356,7 +356,7 @@ ${orNone(renderLinks(links, { preview: false }))}
 ${renderOutline(plan, analysis, hunks)}
 
 ## 참고 링크
-${links.length ? renderLinkTitles(links) : NONE}
+${links.length ? renderLinkTitles(links, plan.linkRoles) : NONE}
 
 위 재료로 초안을 Markdown 으로 써 주세요. 첫 줄은 \`# 제목\` 입니다.`,
   },

@@ -5,12 +5,17 @@ import {
   BLANK_LIMIT,
   CODE_MODES,
   EVIDENCE_PATTERN,
+  LINK_RELATION_MAX,
+  LINK_ROLES,
   SECTION_RANGE,
   type Analysis,
   type BlankKind,
   type CodeMode,
+  type LinkRole,
+  type LinkRoleEntry,
   type Plan,
   type RawAnalysis,
+  type RawPlan,
 } from './schemas.ts';
 
 const HINT_MAX = 80;
@@ -36,6 +41,9 @@ const toBlankKind = (kind: string): BlankKind =>
 const toCodeMode = (mode: string): CodeMode =>
   (CODE_MODES as readonly string[]).includes(mode) ? (mode as CodeMode) : 'after';
 
+const toLinkRole = (role: string): LinkRole =>
+  (LINK_ROLES as readonly string[]).includes(role) ? (role as LinkRole) : 'other';
+
 const clamp = (value: number, min: number, max: number): number =>
   Math.min(Math.max(value, min), max);
 
@@ -50,9 +58,26 @@ const blankLimit = (length: string): number =>
     ? BLANK_LIMIT[length as keyof typeof BLANK_LIMIT]
     : BLANK_LIMIT.medium;
 
-// 없는 hunk·link 번호를 빼고, 절 수를 길이 범위로 자르고, level 건너뜀을 고친다.
+// 입력 링크마다 역할 하나를 입력 순서대로 만든다. 모르는·중복 번호는 버리고,
+// 빠진 링크는 other 와 빈 관계로 채우며, 관계는 앞뒤 공백을 뺀 뒤 상한까지만 남긴다.
+const validateLinkRoles = (raw: RawPlan['linkRoles'], linkIds: Set<string>): LinkRoleEntry[] => {
+  const byId = new Map<string, RawPlan['linkRoles'][number]>();
+  for (const entry of raw) {
+    if (linkIds.has(entry.id) && !byId.has(entry.id)) byId.set(entry.id, entry);
+  }
+  return [...linkIds].map((id) => {
+    const entry = byId.get(id);
+    return {
+      id,
+      role: toLinkRole(entry?.role ?? ''),
+      relation: Array.from((entry?.relation ?? '').trim()).slice(0, LINK_RELATION_MAX).join(''),
+    };
+  });
+};
+
+// 없는 hunk·link 번호를 빼고, 절 수를 길이 범위로 자르고, level 건너뜀을 고친다. 링크 역할도 보정한다.
 export const validatePlan = (
-  plan: Plan,
+  plan: RawPlan,
   ctx: { hunkIds: Set<string>; linkIds: Set<string>; length: string },
 ): Plan => {
   const [, max] = sectionRange(ctx.length);
@@ -69,7 +94,7 @@ export const validatePlan = (
       links: section.links.filter((id) => ctx.linkIds.has(id)),
     };
   });
-  return { ...plan, sections };
+  return { ...plan, sections, linkRoles: validateLinkRoles(plan.linkRoles, ctx.linkIds) };
 };
 
 const isKnownEvidence = (

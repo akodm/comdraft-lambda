@@ -12,6 +12,7 @@ const plan: Plan = {
     { level: 2, heading: '보이는 이미지만 불러오기', purpose: '해결', hunks: ['C1.F1.H1'], links: ['L1'] },
   ],
   excludedCommits: [{ id: 'C2', reason: '오타' }],
+  linkRoles: [],
 };
 
 const analysis: Analysis = {

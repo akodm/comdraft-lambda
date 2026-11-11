@@ -25,6 +25,13 @@ export const BLANK_LIMIT: Record<'short' | 'medium' | 'long', number> = {
   long: 3,
 };
 
+// 참고 링크 역할. 기본값은 other
+export const LINK_ROLES = ['docs', 'article', 'discussion', 'other'] as const;
+export type LinkRole = (typeof LINK_ROLES)[number];
+
+// 링크와 이 글의 관계 설명 최대 글자 수
+export const LINK_RELATION_MAX = 120;
+
 export const PlanSchema = z.object({
   title: z.string(),
   takeaway: z.string(),
@@ -38,6 +45,8 @@ export const PlanSchema = z.object({
     }),
   ),
   excludedCommits: z.array(z.object({ id: z.string(), reason: z.string() })),
+  // role 은 구조화 출력이 enum 을 강제하지 않아 문자열로 받고 검증 코드에서 보정한다
+  linkRoles: z.array(z.object({ id: z.string(), role: z.string(), relation: z.string() })),
 });
 
 export const AnalysisSchema = z.object({
@@ -71,7 +80,18 @@ export const AnalysisSchema = z.object({
   ),
 });
 
-export type Plan = z.infer<typeof PlanSchema>;
+// 모델이 돌려준 그대로의 기획 (role 이 목록 밖일 수 있음)
+export type RawPlan = z.infer<typeof PlanSchema>;
+
+// 링크 하나의 역할과, 그 링크가 이 글과 맺는 관계
+export interface LinkRoleEntry {
+  id: string;
+  role: LinkRole;
+  relation: string;
+}
+
+// 검증을 거친 기획 (linkRoles 는 입력 링크마다 하나씩, role 은 목록 안의 값)
+export type Plan = Omit<RawPlan, 'linkRoles'> & { linkRoles: LinkRoleEntry[] };
 // 모델이 돌려준 그대로의 분석 결과 (mode·kind 가 목록 밖일 수 있음)
 export type RawAnalysis = z.infer<typeof AnalysisSchema>;
 

@@ -55,4 +55,4 @@ export const LINK_TOKEN_BUDGET = 3_000;
 // 링크 제목 최대 글자 수
 export const LINK_TITLE_MAX = 80;
 // 링크 본문 미리보기 글자 수
-export const LINK_PREVIEW_CHARS = 300;
+export const LINK_PREVIEW_CHARS = 1_500;
