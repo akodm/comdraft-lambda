@@ -441,6 +441,43 @@ describe('배포 후 운영 초안 두 번째에서 찾은 규칙', () => {
   }
 });
 
+// 여러 커밋·옵션 비교 1바퀴(사례 6개)에서 반복된 문제
+describe('옵션 조합 비교 1바퀴에서 찾은 규칙', () => {
+  const PHRASES = {
+    ko: {
+      stepLabel: '흐름 단계 이름("개념:", "적용:", "정리:")을 제목 앞에 붙이지 않는다',
+      smallHunks: '변수 이름 바꾸기, import 경로 정리',
+      rPlacement: 'R 사실은 그 내용과 같은 주제를 다루는 절에 둔다',
+      codeLimit: '짧게 2개, 보통 3개, 길게 4개',
+      askCode: '코드를 보면 알 수 있는 구현 질문',
+      closingNoList: '요청의 문장을 목록으로 다시 모으지 않고',
+      openingGuide: '"과정을 따라가 볼게요"',
+    },
+    en: {
+      stepLabel: 'Do not prefix headings with flow-step names',
+      smallHunks: 'variable renames, import path cleanups',
+      rPlacement: 'Put each R fact in the section about the same subject',
+      codeLimit: '2 for short, 3 for medium, 4 for long',
+      askCode: 'Do not ask implementation questions the code already answers',
+      closingNoList: "the request's sentences into a list again in the last section",
+      openingGuide: '"Let\'s follow the process"',
+    },
+  } as const;
+
+  for (const pack of packs) {
+    const phrase = PHRASES[pack.locale];
+    it(`${pack.locale}: 기획·분석·작성에 1바퀴 규칙이 들어간다`, () => {
+      assert.ok(pack.plan.system.includes(phrase.stepLabel));
+      assert.ok(pack.plan.system.includes(phrase.smallHunks));
+      for (const key of ['rPlacement', 'codeLimit', 'askCode'] as const) {
+        assert.ok(pack.analyze.system.includes(phrase[key]), key);
+      }
+      assert.ok(pack.write.system.includes(phrase.closingNoList));
+      assert.ok(pack.write.system.includes(phrase.openingGuide));
+    });
+  }
+});
+
 describe('독자 기준과 요청·링크·빈칸 답 규칙', () => {
   it('기획·분석·작성·빈칸 채우기 system 은 독자 규칙을 담는다', () => {
     assert.equal(getPromptPack('ko').readerRuleMarker, '독자는 이 저장소와 코드, 요청 문구를 본 적이 없다');
@@ -743,19 +780,23 @@ describe('getPromptPack', () => {
 
   it('글 유형은 흐름으로 정의하고, 기획·작성 system 은 흐름 규칙을 담는다', () => {
     const ko = getPromptPack('ko');
+    // 경험 글의 "부딪힌 문제" 는 근거가 있을 때만 (근거 없는 문제 틀을 부르지 않게)
     assert.equal(
       ko.postType.experience,
-      '배경과 계기로 독자를 끌어들임 → 부딪힌 문제 → 고민과 시도 → 해결 → 돌아보며 정리',
+      '배경과 계기로 독자를 끌어들임 → (근거가 있을 때) 부딪힌 문제 → 고민과 시도 → 해결 → 돌아보며 정리',
     );
-    assert.equal(ko.postType.lecture, '왜 알아야 하는지 → 개념 → 적용 → 정리');
-    assert.equal(ko.postType.experiment, '궁금증 → 방법 → 결과 → 해석');
+    // 강의·실험 글은 작업 경과가 아니라 개념·방법, 질문·확인의 순서로 (옵션 조합 비교에서 경험 글처럼 쓰였다)
+    assert.match(ko.postType.lecture, /왜 필요한지 → 핵심 개념을 이 작업의 코드로 설명 → 적용하는 방법을 순서대로 → 쓸 때 주의할 점과 정리/);
+    assert.ok(ko.postType.lecture.includes('작업 경과보다 개념과 방법을 중심에'));
+    assert.match(ko.postType.experiment, /확인하려던 질문 → 어떻게 해 봤는지\(방법\) → 무엇이 나왔는지\(결과/);
+    assert.ok(ko.postType.experiment.includes('작업 순서가 아니라 질문과 확인의 순서로'));
     assert.ok(ko.plan.system.includes('이름표'));
     assert.ok(ko.plan.system.includes('앞 절'));
     assert.ok(ko.write.system.includes('## 흐름'));
     const en = getPromptPack('en');
-    assert.match(en.postType.experience, /background[\s\S]*→[\s\S]*looking back/);
-    assert.match(en.postType.lecture, /why it matters → concept → applying it → wrap-up/);
-    assert.match(en.postType.experiment, /question → method → results → interpretation/);
+    assert.match(en.postType.experience, /background[\s\S]*→ \(when there is evidence\) the problem[\s\S]*looking back/);
+    assert.match(en.postType.lecture, /why this technique is needed → the core concept[\s\S]*not the timeline of the work/);
+    assert.match(en.postType.experiment, /the question you set out to check → how you tried it \(method\)[\s\S]*not the order of the work/);
     assert.ok(en.plan.system.includes('label'));
     assert.ok(en.plan.system.includes('previous section'));
     assert.ok(en.write.system.includes('## Flow'));

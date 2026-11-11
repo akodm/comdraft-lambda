@@ -1,6 +1,6 @@
 import { FILL_TARGET_MARKER } from '../contract.ts';
 import type { JobContext } from '../jobs.ts';
-import { MAX_REVIEW_ISSUES, REVIEW_FIX_MAX, REVIEW_QUOTE_MAX } from '../generation/limits.ts';
+import { CODE_LIMIT, MAX_REVIEW_ISSUES, REVIEW_FIX_MAX, REVIEW_QUOTE_MAX } from '../generation/limits.ts';
 import type { ReviewKind, RevisionProblem, RevisionProblemKind } from '../generation/review.ts';
 import { BLANK_LIMIT, LINK_RELATION_MAX, SECTION_RANGE, type LinkRole } from '../generation/schemas.ts';
 import {
@@ -39,9 +39,11 @@ const tone: PromptPack['tone'] = {
 
 const postType: PromptPack['postType'] = {
   experience:
-    'draw the reader in with the background and what started it → the problem you ran into → what you weighed and tried → the solution → looking back',
-  lecture: 'why it matters → concept → applying it → wrap-up',
-  experiment: 'the question → method → results → interpretation',
+    'draw the reader in with the background and what started it → (when there is evidence) the problem you ran into → what you weighed and tried → the solution → looking back',
+  lecture:
+    'why this technique is needed → the core concept explained with this work\'s code → how to apply it, step by step → points to watch out for and wrap-up. Put the concept and method at the center, not the timeline of the work, so readers can learn by following along',
+  experiment:
+    'the question you set out to check → how you tried it (method) → what came out (results; ask with a blank when there is no evidence) → what the results tell you (interpretation). Write in the order of the question and the check, not the order of the work',
 };
 
 const length: PromptPack['length'] = {
@@ -184,7 +186,7 @@ ${ID_RULE}
 - takeaway: one or two sentences on what the reader will get from the post. As with title, do not add achievements, numbers, or effects that are not in the inputs.
 - sections: the outline, in reading order.
   - level: heading level 2–6. The post title is H1, so sections start at 2 and go one level deeper at a time (2 cannot be followed directly by 4).
-  - heading: the section heading. Make it say what the section is about, not a label such as "Problem", "Solution", or "Lessons" (e.g. "Loading only the images on screen" instead of "Solution"). Do not state facts that are not in the inputs.
+  - heading: the section heading. Make it say what the section is about, not a label such as "Problem", "Solution", or "Lessons" (e.g. "Loading only the images on screen" instead of "Solution"). Do not prefix headings with flow-step names ("Concept:", "Applying:", "Wrap-up:"). Do not state facts or premises that are not in the inputs (e.g. "we used to run it for free" when the request never says so).
   - purpose: what this section will say and how it follows from the previous section. The next stage looks for facts based on this, so name the specific change or concept it covers, and add a short phrase on how it connects to the previous section (e.g. to fix the slow first screen from the previous section). For the first section, say what situation it draws the reader into.
   - hunks: ids of the hunks whose original text is needed to write this section, most important first.
   - links: ids of the links this section draws on
@@ -207,7 +209,7 @@ ${Object.entries(linkRoleText)
 - Use words such as "problem", "ran into", or "error" in a heading or purpose only when the commit messages, the request, or the code (e.g. a change that adds error handling) show an actual problem or failure. Setting up a problem without evidence opens the post with a made-up conflict. If no problem is confirmed, connect the sections in the order of the work.
 - When the request pairs a cause with a fix (e.g. "because of A, I solved it by building B"), write that cause in the purpose of the section about change B, the fix. Using it as the motivation of another section (e.g. one about configuration files or plugins) opens the post with a wrong cause.
 - Gather small configuration changes such as configuration files, build scripts, and tsconfig into one section instead of scattering them into sections about other topics.
-- Choose only hunks of [included] files whose ids are shown in the catalog, or ids H1–HN of a \`(+N hunks)\` file. The next stage receives at most 30 hunks, taken from earlier sections first and, within a section, in listed order, so put the key hunks first. Prefer code that shows the topic over tests, configuration, and minor fixes.
+- Choose only hunks of [included] files whose ids are shown in the catalog, or ids H1–HN of a \`(+N hunks)\` file. The next stage receives at most 30 hunks, taken from earlier sections first and, within a section, in listed order, so put the key hunks first. Prefer code that shows the topic over tests, configuration, and minor fixes. Do not choose hunks such as variable renames, import path cleanups, or unrelated dependency changes unless they show the topic. Do not use the last section as a place to collect the remaining small changes.
 - Do not choose the same hunk for more than one section.
 - For a file a later commit changes again, choose the hunk of the last commit. A hunk from an earlier commit is not the final code, so choose it as well only when how the code changed from its first form is central to the story.
 - Write one linkRoles entry for every input link. Decide role by reading the link's body. Write in relation only what the link's body and the commit messages, file lines, and hunk lines confirm; do not guess. The next stage looks for facts based on relation, so a guessed relation makes work that did not follow a document look as if it did. Also add a link with a relation to the links of the section that covers that part.
@@ -239,6 +241,7 @@ ${ID_RULE}
 - R supports only what the request text literally states, and you may make a fact from it only when both conditions hold. The request is guidance on the post's direction, so putting it in the facts carries its sentences straight into the post.
   1. It is an experience or fact the author states (motivation, results, numbers, a description of the project, impressions or opinions from using it).
   2. It fits the topic of the post and the purpose of the section the fact goes in.
+- Put each R fact in the section about the same subject (e.g. the reason for adding the loader goes in the section about the loader). Keep only impressions and opinions in the closing reflection section, and do not pile the request's other sentences there; piling them up turns the closing into a summary list that repeats the request.
 - Read the request one sentence at a time, and make an R fact for each sentence that states a reason, a problem the author ran into, how they solved it, or an impression. Reasons and impressions in the request are the author's own story that the code does not show; dropping them leaves only a code walkthrough and makes you ask the same thing again as a blank.
 - Keep impressions or opinions stated in the request (e.g. "it was easy to use") as R facts: only the author knows them. They are material for the closing reflection, and dropping them loses what the author wanted to say.
 - When the request pairs a cause with a fix (e.g. "because of A, I solved it by building B"), keep the pair. Put the cause only in the section that holds the change the request names as the fix, and do not move it to explain a different change. A broken pair gives the reader a wrong cause. For example, if the request says "I could not put defaults in next.config, so I built a dedicated client component and hooks", that reason is a fact of the section about the component and hooks, not a reason for the section about configuration files or plugins.
@@ -259,6 +262,7 @@ ${ID_RULE}
 - code: code snippets to show in the post. Ids run S1, S2 … in order.
 - Choose code by location only: from (hunk id), startLine, endLine (line numbers within the hunk, inclusive). Do not copy the code. The system inserts the original lines verbatim so that not a single character of the code changes.
 - Keep each snippet to 40 lines or fewer, cut at a unit that makes sense on its own, such as one function or one configuration block. Do not start or end in the middle of a statement or block.
+- Pick at most the length's code limit for the whole post (${CODE_LIMIT.short} for short, ${CODE_LIMIT.medium} for medium, ${CODE_LIMIT.long} for long), most important first; the system drops snippets beyond it from the end. Prefer code that shows behavior over code such as table definitions or lists of constants that add nothing to the story.
 - mode: after shows the code after the change (context lines and + lines). Use diff when comparing what changed is the point.
 - point: one English sentence on what the reader should notice in this code.
 - Choose only key code that shows the topic, and do not choose the same lines twice. If there is no code worth showing, leave code empty. Even if code is a required block, never invent it.
@@ -272,7 +276,7 @@ ${ID_RULE}
   - result: results, numbers, effects
   - lesson: lessons learned, reflections
   - detail: anything else that needs more explanation (design reasons, comparison with alternatives, etc.)
-- ask: one question for the author, in English, within 80 characters, without quotes or braces. Ask one specific thing the author can answer in a sentence or two. Avoid something vague like "more details" or several questions in one (e.g. Why did you choose IntersectionObserver?).
+- ask: one question for the author, in English, within 80 characters, without quotes or braces. Ask one specific thing the author can answer in a sentence or two. Avoid something vague like "more details" or several questions in one (e.g. Why did you choose IntersectionObserver?). Do not ask implementation questions the code already answers (such as where a function is called), questions that name internal identifiers, or questions built on a premise not in the inputs. A blank asks for what only the author knows (reasons, experience, results).
 - Do not ask about what you already confirmed as a fact or what the request already says. Asking the author again for what they already said makes them write the same answer twice. Before making a blank, look at the request and the R facts again, and do not make the blank if its answer is already there (e.g. if the request says "I could not put defaults in the config, so I built a dedicated component and hooks", do not ask why you built that component and those hooks; if it says "it was easy to use", do not ask how it went after using it, or for effects or numbers such as how much time it saved). An impression is already the author's answer, and a blank asking them to measure its effect is hard for them to answer.
 
 ## Filling sections
@@ -340,10 +344,10 @@ ${EVIDENCE_SCOPE}
 - The post follows the post type's flow as one story from start to finish. Do not write it like a dev log that alternates problem and solution section by section.
 - Opening: the first paragraph draws the reader into the situation of the work, describing within the facts the situation that fits the first step of the post type's flow (e.g. background and what started it for experience, why it matters for lecture). If no fact shows the motivation, do not make up a situation; start directly from the first fact. Do not make up the author's thoughts, expectations, or feelings that are not in the facts either (sentences such as "At first I thought a small tweak would do"). A thought made up to read like a story becomes something the author never said. Do not add past experience that is not in the facts either ("the setup I used to use", "the way I was used to").
 - When the opening introduces a cause the request pairs with a fix, state the fix the request names along with it (e.g. "I could not put defaults in next.config, so I built a dedicated client component and hooks"). Do not connect a different change to that cause with "so" right after it. If the opening's cause leads straight into the next sentence's change, readers take that change as the fix.
-- Keep the purpose stated in a fact ("so that …", "so that … does not …") together with its change. Without it, readers cannot tell why it was done. Do not open by stating sources or with a table-of-contents line such as "In this post, I will cover …".
+- Keep the purpose stated in a fact ("so that …", "so that … does not …") together with its change. Without it, readers cannot tell why it was done. Do not open by stating sources or with a table-of-contents line such as "In this post, I will cover …", "Let's follow the process", or "First, let's look at …".
 - Transitions: the first sentence of each section follows from the previous one, so that what was learned in one section leads to the next concern or choice. Use the connection noted in purpose as a guide.
 - Use connectors that state a cause or a problem, such as "so", "because", or "I ran into", only when the facts state that cause or problem. A cause without evidence is a made-up story. Without evidence, connect by the order of the work, as in "next" or "then".
-- Closing: end the last section with a short reflection by the author looking back on the work, not a list summarizing the facts. Keep the reflection within what the facts confirm or what a blank leaves to the author, and do not make up lessons that are not in the inputs. If there is no fact or lesson blank to reflect on, do not make up how you felt; close in one or two sentences, within the facts, on what changed or what is left to do.
+- Closing: do not gather facts already covered or the request's sentences into a list again in the last section, and do not pile small changes that did not fit elsewhere into it; use a required list block in the body. End the last section with a short reflection by the author looking back on the work, not a list summarizing the facts. Keep the reflection within what the facts confirm or what a blank leaves to the author, and do not make up lessons that are not in the inputs. If there is no fact or lesson blank to reflect on, do not make up how you felt; close in one or two sentences, within the facts, on what changed or what is left to do.
 - Do not write a separate section for one that has no facts, code, or blanks, so that no section is filled with unsupported content. But if such a section holds a heading level from the required blocks or has subsections, keep the heading and move a neighboring section's material under it.
 
 ${PLACEHOLDER_RULE}
