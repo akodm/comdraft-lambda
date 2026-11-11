@@ -18,6 +18,13 @@ export const SECTION_RANGE: Record<'short' | 'medium' | 'long', [number, number]
   long: [5, 7],
 };
 
+// 글 전체 빈칸 상한. 분석 결과가 넘으면 앞에서부터 이 수만큼만 남긴다 (프롬프트 안내와 검증 코드가 함께 쓴다).
+export const BLANK_LIMIT: Record<'short' | 'medium' | 'long', number> = {
+  short: 1,
+  medium: 2,
+  long: 3,
+};
+
 export const PlanSchema = z.object({
   title: z.string(),
   takeaway: z.string(),

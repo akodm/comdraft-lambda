@@ -58,14 +58,17 @@ export interface PromptPack {
   locale: JobLocale;
   // 세 단계 system 에 모두 들어가는 데이터-지시 분리 문장의 고정 구절 (테스트용)
   dataRuleMarker: string;
+  // 기획·작성 system 에 들어가는 글쓴이 목소리 규칙의 고정 구절 (테스트용)
+  voiceRuleMarker: string;
   plan: Stage<PlanPromptInput>;
   analyze: Stage<AnalyzePromptInput>;
   write: Stage<WritePromptInput>;
   // 문체 지시
   tone: Record<Tone, string>;
-  // 목차 틀
+  // 글의 흐름 (독자를 이끌어 가는 순서)
   postType: Record<PostType, string>;
-  length: Record<Length, { sections: [number, number]; target: string }>;
+  // 절 수 범위, 글 전체 빈칸 상한, 본문 분량
+  length: Record<Length, { sections: [number, number]; blanks: number; target: string }>;
   // 필수 블록을 글에 어떻게 반영할지
   requiredBlocks: Record<RequiredBlock, string>;
   // ask 가 비었을 때 기본 문구

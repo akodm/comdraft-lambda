@@ -11,6 +11,7 @@ import { sanitizeHint } from './validate.ts';
 export interface AssembleInput {
   markdown: string;
   analysis: Analysis;
+  // 커밋 메시지·파일 경로·hunk 는 인라인 코드의 근거 확인에만 쓴다 (본문에 커밋 링크를 넣지 않는다)
   commits: PreparedCommit[];
   hunks: Map<string, PreparedHunk>;
   links: PreparedLink[];
@@ -19,13 +20,14 @@ export interface AssembleInput {
 }
 
 // 모델이 쓴 자리표시자. 이 패턴에 맞는 것만 다루고 나머지 중괄호 글자는 그대로 둔다.
+// commit 은 더 이상 쓰라고 하지 않지만, 모델이 옛 문법을 쓰면 글자로 남지 않게 지운다.
 const PLACEHOLDER = /\{\{\s*(code|commit|link|ask)\s*:\s*([A-Z]\d+)\s*\}\}/g;
 
 // 치환한 내용을 끝까지 보호하는 표지 (사설 영역 문자). 모델 글에 같은 문자가 있으면 먼저 지운다.
 const BLOCK_OPEN = ''; // 독립 블록(코드, 빈칸)
 const BLOCK_CLOSE = '';
 const QUOTE_MARK = ''; // 줄머리 인용 표시(>)
-const LINK_OPEN = ''; // 인라인 링크(커밋, 링크)
+const LINK_OPEN = ''; // 인라인 링크(참고 링크)
 const LINK_CLOSE = '';
 const SPAN_OPEN = ''; // 근거 있는 인라인 코드 조각
 const SPAN_CLOSE = '';
@@ -82,9 +84,6 @@ const formatLink = (link: PreparedLink): string => {
   const text = escapeLinkText(link.title) || escapeLinkText(hostnameOf(link.url)) || 'link';
   return `[${text}](${safeUrl(link.url)})`;
 };
-
-const formatCommit = (commit: PreparedCommit): string =>
-  `[${commit.sha.slice(0, 7)}](${safeUrl(commit.htmlUrl)})`;
 
 // 코드 안의 어떤 백틱 묶음보다 긴 울타리 (최소 3)
 const fenceFor = (code: string): string => {
@@ -190,14 +189,15 @@ const protectSpans = (text: string, corpus: string, store: Store): string =>
     .join('\n');
 
 // c: 자리표시자를 표지로 바꾼다. 블록형은 독립 단락으로 빼고, 모르거나 실패한 것은 공백 하나로 바꿔 앞뒤 글이 이어 붙지 않게 한다.
+// 커밋 자리표시자는 본문에 출처를 남기지 않도록 언제나 공백으로 지운다.
 const substitutePlaceholders = (text: string, input: AssembleInput, store: Store): string =>
   text.replace(PLACEHOLDER, (_whole, kind: string, id: string) => {
-    if (kind === 'commit' || kind === 'link') {
-      const commit = kind === 'commit' ? input.commits.find((c) => c.id === id) : undefined;
-      const link = kind === 'link' ? input.links.find((l) => l.id === id) : undefined;
-      if (!commit && !link) return ' ';
-      if (link) store.cited.add(link.id);
-      store.links.push(commit ? formatCommit(commit) : formatLink(link as PreparedLink));
+    if (kind === 'commit') return ' ';
+    if (kind === 'link') {
+      const link = input.links.find((l) => l.id === id);
+      if (!link) return ' ';
+      store.cited.add(link.id);
+      store.links.push(formatLink(link));
       return `${LINK_OPEN}${store.links.length - 1}${LINK_CLOSE}`;
     }
     const block = kind === 'code' ? renderCode(id, input) : renderBlank(id, input);

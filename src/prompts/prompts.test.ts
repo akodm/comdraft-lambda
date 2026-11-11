@@ -129,12 +129,85 @@ describe('getPromptPack', () => {
     }
   });
 
-  it('작성 system 은 네 가지 자리표시자 문법을 그대로 담는다', () => {
+  it('작성 system 은 세 가지 자리표시자 문법을 그대로 담는다', () => {
     for (const pack of packs) {
-      for (const placeholder of ['{{code:S1}}', '{{commit:C2}}', '{{link:L1}}', '{{ask:U1}}']) {
+      for (const placeholder of ['{{code:S1}}', '{{link:L1}}', '{{ask:U1}}']) {
         assert.ok(pack.write.system.includes(placeholder), `${pack.locale}: ${placeholder}`);
       }
     }
+  });
+
+  it('어느 단계에도 커밋 자리표시자가 없다', () => {
+    for (const pack of packs) {
+      const texts = [
+        pack.plan.system,
+        pack.analyze.system,
+        pack.write.system,
+        pack.plan.user({ context: context(), commits, links: [link] }),
+        pack.analyze.user({ context: context(), plan, commits, hunks: [h1], links: [link] }),
+        pack.write.user(writeInput()),
+      ];
+      for (const text of texts) assert.ok(!text.includes('{{commit:'), pack.locale);
+    }
+  });
+
+  it('기획과 작성 system 은 글쓴이 목소리 규칙을 담는다', () => {
+    for (const pack of packs) {
+      assert.ok(pack.voiceRuleMarker.length > 0);
+      for (const stage of [pack.plan, pack.write]) {
+        assert.ok(stage.system.includes(pack.voiceRuleMarker), `${pack.locale} 목소리 규칙 없음`);
+      }
+    }
+    const ko = getPromptPack('ko').write.system;
+    for (const phrase of ['1인칭', '요청하신', '아래는 ~입니다', '정리하면 다음과 같습니다', '커밋 해시']) {
+      assert.ok(ko.includes(phrase), `ko: ${phrase}`);
+    }
+    const en = getPromptPack('en').write.system;
+    for (const phrase of ['first person', 'as you requested', 'Below is', 'commit hash']) {
+      assert.ok(en.includes(phrase), `en: ${phrase}`);
+    }
+  });
+
+  it('글 유형은 흐름으로 정의하고, 기획·작성 system 은 흐름 규칙을 담는다', () => {
+    const ko = getPromptPack('ko');
+    assert.equal(
+      ko.postType.experience,
+      '배경과 계기로 독자를 끌어들임 → 부딪힌 문제 → 고민과 시도 → 해결 → 돌아보며 정리',
+    );
+    assert.equal(ko.postType.lecture, '왜 알아야 하는지 → 개념 → 적용 → 정리');
+    assert.equal(ko.postType.experiment, '궁금증 → 방법 → 결과 → 해석');
+    assert.ok(ko.plan.system.includes('이름표'));
+    assert.ok(ko.plan.system.includes('앞 절'));
+    assert.ok(ko.write.system.includes('## 흐름'));
+    const en = getPromptPack('en');
+    assert.match(en.postType.experience, /background[\s\S]*→[\s\S]*looking back/);
+    assert.match(en.postType.lecture, /why it matters → concept → applying it → wrap-up/);
+    assert.match(en.postType.experiment, /question → method → results → interpretation/);
+    assert.ok(en.plan.system.includes('label'));
+    assert.ok(en.plan.system.includes('previous section'));
+    assert.ok(en.write.system.includes('## Flow'));
+  });
+
+  it('빈칸 상한이 system 옵션표와 사용자 입력 옵션 줄에 들어간다', () => {
+    const ko = getPromptPack('ko');
+    const en = getPromptPack('en');
+    // 옵션표는 기획·작성 system 에, 분석은 사용자 입력 옵션 줄로 받는다
+    for (const system of [ko.plan.system, ko.write.system]) {
+      assert.ok(system.includes('빈칸 최대 1개'));
+      assert.ok(system.includes('빈칸 최대 2개'));
+      assert.ok(system.includes('빈칸 최대 3개'));
+    }
+    for (const system of [en.plan.system, en.write.system]) {
+      assert.ok(system.includes('at most 1 blank'));
+      assert.ok(system.includes('at most 2 blanks'));
+      assert.ok(system.includes('at most 3 blanks'));
+    }
+    assert.ok(ko.write.user(writeInput()).includes('빈칸 최대 2개'));
+    assert.ok(ko.analyze.user({ context: context({ length: 'short' }), plan, commits, hunks: [h1], links: [] }).includes('빈칸 최대 1개'));
+    assert.ok(en.write.user(writeInput(context({ length: 'long' }))).includes('at most 3 blanks'));
+    // 빈칸은 없으면 글이 성립하지 않는 내용에만 둔다
+    assert.ok(ko.analyze.system.includes('없으면 글이 성립하지 않는'));
+    assert.ok(en.analyze.system.includes('the post does not hold together without'));
   });
 
   it('요청 문구는 <request> 안에, 커밋은 <commit id="C1"> 안에 들어간다', () => {
@@ -175,7 +248,9 @@ describe('getPromptPack', () => {
 
   it('작성 입력에 사실, 코드 원문, 빈칸, 링크 제목이 번호와 함께 들어간다', () => {
     const text = getPromptPack('en').write.user(writeInput());
-    assert.match(text, /<fact id="K1" commits="C1" links="L1">observe 를 호출한다<\/fact>/);
+    // 커밋 출처는 내부 근거로만 쓰고 작성 단계에 넘기지 않는다
+    assert.match(text, /<fact id="K1" links="L1">observe 를 호출한다<\/fact>/);
+    assert.ok(!text.includes('commits='));
     assert.match(text, /<code id="S1" lang="ts" mode="after">[\s\S]*observer\.observe\(el\);[\s\S]*<\/code>/);
     // after 모드는 삭제 줄을 빼고 접두사를 뗀다
     assert.ok(!text.includes('old();'));

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import type { PreparedHunk } from './prepare.ts';
-import { AnalysisSchema, type Analysis, type BlankKind, type Plan } from './schemas.ts';
+import { AnalysisSchema, BLANK_LIMIT, type Analysis, type BlankKind, type Plan } from './schemas.ts';
 import { sanitizeHint, validateAnalysis, validatePlan } from './validate.ts';
 
 const section = (level: number, extra: Partial<Plan['sections'][number]> = {}) => ({
@@ -42,6 +42,7 @@ const ctxFor = (p: Plan, hunks: PreparedHunk[] = []) => ({
   commitIds: new Set(['C1', 'C2']),
   linkIds: new Set(['L1']),
   blankDefaults: defaults,
+  length: 'long',
 });
 
 const empty: Analysis = { facts: [], code: [], unknowns: [] };
@@ -146,21 +147,41 @@ describe('validateAnalysis', () => {
     assert.deepEqual(out.unknowns.map((u) => u.ask), ['배운 점', '수치 는?']);
   });
 
-  it('사실도 unknown 도 없는 절에 detail unknown 을 만든다', () => {
+  it('재료가 없는 절에도 빈칸을 만들지 않는다 (작성 단계가 이웃 절과 합친다)', () => {
     const input: Analysis = {
       ...empty,
-      facts: [{ id: 'K1', section: 0, text: 'a', evidence: ['C9'] }],
+      facts: [
+        { id: 'K1', section: 0, text: 'a', evidence: ['C9'] },
+        { id: 'K2', section: 1, text: 'b', evidence: ['C1'] },
+      ],
       unknowns: [{ id: 'U3', section: 9, kind: 'detail', ask: 'x' }],
     };
     const out = validateAnalysis(input, ctxFor(p));
+    assert.deepEqual(out.unknowns, []);
+    assert.deepEqual(out.facts.map((f) => f.id), ['K2']);
+    assert.equal(input.unknowns.length, 1);
+  });
+
+  it('글 전체에 재료가 하나도 없으면 첫 절에 detail 빈칸 하나만 둔다', () => {
+    const out = validateAnalysis(
+      { ...empty, unknowns: [{ id: 'U3', section: 9, kind: 'detail', ask: 'x' }] },
+      ctxFor(p),
+    );
     assert.deepEqual(
       out.unknowns.map((u) => [u.id, u.section, u.kind, u.ask]),
-      [
-        ['U4', 0, 'detail', '자세한 내용'],
-        ['U5', 1, 'detail', '자세한 내용'],
-      ],
+      [['U4', 0, 'detail', '자세한 내용']],
     );
-    assert.equal(input.unknowns.length, 1);
+  });
+
+  it('코드만 있는 글은 빈칸을 더하지 않는다', () => {
+    const out = validateAnalysis(
+      {
+        ...empty,
+        code: [{ id: 'S1', section: 1, from: 'C1.F1.H1', startLine: 1, endLine: 2, mode: 'after', point: 'p' }],
+      },
+      ctxFor(p, [hunk('C1.F1.H1', 3)]),
+    );
+    assert.deepEqual(out.unknowns, []);
   });
 
   it('sanitizeHint: 따옴표·중괄호를 지운 뒤 ::: 가 다시 생기지 않는다', () => {
@@ -169,7 +190,7 @@ describe('validateAnalysis', () => {
     }
   });
 
-  it('가린 hunk 만 근거인 사실은 버리고 빈 절에 detail unknown 을 만든다', () => {
+  it('가린 hunk 만 근거인 사실은 버리고, 다른 재료가 있으면 빈칸을 더하지 않는다', () => {
     const out = validateAnalysis(
       {
         ...empty,
@@ -179,7 +200,50 @@ describe('validateAnalysis', () => {
       ctxFor(p, [hunk('C1.F1.H2', 5, true)]),
     );
     assert.deepEqual(out.facts, []);
-    assert.deepEqual(out.unknowns.map((u) => [u.id, u.section]), [['U1', 1], ['U2', 0]]);
+    assert.deepEqual(out.unknowns.map((u) => [u.id, u.section]), [['U1', 1]]);
+  });
+});
+
+describe('validateAnalysis 빈칸 상한', () => {
+  const p = plan([section(2), section(2), section(2)]);
+  const unknowns = (count: number): Analysis['unknowns'] =>
+    Array.from({ length: count }, (_, i) => ({
+      id: `U${i + 1}`,
+      section: i % 3,
+      kind: 'detail' as const,
+      ask: `질문 ${i + 1}`,
+    }));
+  const run = (length: string, count = 4) =>
+    validateAnalysis({ ...empty, unknowns: unknowns(count) }, { ...ctxFor(p), length });
+
+  it('BLANK_LIMIT 은 short 1, medium 2, long 3', () => {
+    assert.deepEqual(BLANK_LIMIT, { short: 1, medium: 2, long: 3 });
+  });
+
+  it('상한을 넘으면 앞에서부터 상한까지만 남긴다 (4개 → medium 2개)', () => {
+    assert.deepEqual(run('medium').unknowns.map((u) => u.id), ['U1', 'U2']);
+    assert.deepEqual(run('short').unknowns.map((u) => u.id), ['U1']);
+    assert.deepEqual(run('long').unknowns.map((u) => u.id), ['U1', 'U2', 'U3']);
+  });
+
+  it('알 수 없는 length 는 medium 상한, 상한 안이면 그대로 둔다', () => {
+    assert.deepEqual(run('huge').unknowns.map((u) => u.id), ['U1', 'U2']);
+    assert.deepEqual(run('long', 2).unknowns.map((u) => u.id), ['U1', 'U2']);
+  });
+
+  it('범위 밖 절의 빈칸은 상한을 세기 전에 버린다', () => {
+    const out = validateAnalysis(
+      {
+        ...empty,
+        unknowns: [
+          { id: 'U1', section: 7, kind: 'detail', ask: 'a' },
+          { id: 'U2', section: 0, kind: 'detail', ask: 'b' },
+          { id: 'U3', section: 1, kind: 'detail', ask: 'c' },
+        ],
+      },
+      { ...ctxFor(p), length: 'short' },
+    );
+    assert.deepEqual(out.unknowns.map((u) => u.id), ['U2']);
   });
 });
 

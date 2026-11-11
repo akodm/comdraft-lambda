@@ -154,12 +154,14 @@ const prepareOnly = async (
 };
 
 describe('createClaudePipeline', () => {
-  it('세 단계를 거쳐 코드·커밋 링크·빈칸이 치환된 Markdown 을 만든다', async () => {
+  it('세 단계를 거쳐 코드·빈칸이 치환된 Markdown 을 만든다', async () => {
     const { llm, parses, writes } = fakeLlm(PLAN, ANALYSIS, MARKDOWN);
     const { markdown } = await run(llm);
 
     assert.ok(markdown.includes('```ts\nconst a = 1;\nconst b = 3;\nconst c = 4;\n```'));
-    assert.ok(markdown.includes('[aaaa111](https://github.com/o/r/commit/aaaa1111)'));
+    // 커밋 자리표시자는 링크가 되지 않고 사라진다
+    assert.ok(!markdown.includes('github.com/o/r/commit'));
+    assert.ok(!markdown.includes('aaaa111'));
     assert.ok(markdown.includes(':::blank {kind="motivation" hint="왜 했나"}\n:::'));
     assert.ok(!markdown.includes('{{'));
     assert.deepEqual(
@@ -184,6 +186,31 @@ describe('createClaudePipeline', () => {
     assert.ok(!parses[1].user.includes('C2.F1.H1'));
     assert.deepEqual(analyzed.analysis.code.map((pick) => pick.id), ['S1']);
     assert.ok(!writes[0].user.includes('C2.F1.H1'));
+  });
+
+  it('분석 결과의 빈칸은 길이별 상한까지만 남고, 버린 빈칸은 작성 입력에 없다', async () => {
+    const analysis: Analysis = {
+      ...ANALYSIS,
+      unknowns: ['U1', 'U2', 'U3', 'U4'].map((id) => ({
+        id,
+        section: 0,
+        kind: 'detail' as const,
+        ask: `${id} 질문`,
+      })),
+    };
+    const { llm, writes } = fakeLlm(PLAN, analysis, '# 지연 로딩\n\n## 적용\n\n{{ask:U1}}\n\n{{ask:U3}}');
+    const { analyzed, markdown } = await run(llm);
+
+    assert.deepEqual(analyzed.analysis.unknowns.map((u) => u.id), ['U1', 'U2']);
+    assert.ok(writes[0].user.includes('<blank id="U2"'));
+    assert.ok(!writes[0].user.includes('<blank id="U3"'));
+    assert.ok(!writes[0].user.includes('U4 질문'));
+    // 모델이 버린 빈칸을 써도 조립 단계가 넣지 않는다
+    assert.equal(markdown.match(/:::blank/g)?.length, 1);
+
+    const short = fakeLlm(PLAN, analysis, MARKDOWN);
+    const { analyzed: shortAnalyzed } = await run(short.llm, { context: { length: 'short' } });
+    assert.deepEqual(shortAnalyzed.analysis.unknowns.map((u) => u.id), ['U1']);
   });
 
   it('로케일 en 이면 en 프롬프트를 쓴다', async () => {

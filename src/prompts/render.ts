@@ -204,8 +204,10 @@ export const buildCodeLines = (
     : lines.filter((line) => !line.startsWith('-')).map((line) => line.slice(1));
 };
 
-const factSources = (evidence: string[], prefix: 'C' | 'L'): string =>
-  [...new Set(evidence.filter((id) => id.startsWith(prefix)).map((id) => id.split('.')[0]))].join(' ');
+// 사실의 링크 출처. 커밋 출처는 분석 단계의 내부 근거로만 쓰고 작성 단계에 넘기지 않는다
+// (본문에 커밋 해시나 출처 문장이 들어가지 않게 하기 위해서다).
+const factLinks = (evidence: string[]): string =>
+  [...new Set(evidence.filter((id) => id.startsWith('L')))].join(' ');
 
 const renderSection = (
   index: number,
@@ -218,7 +220,7 @@ const renderSection = (
     .map((fact) =>
       inline(
         'fact',
-        { id: fact.id, commits: factSources(fact.evidence, 'C'), links: factSources(fact.evidence, 'L') },
+        { id: fact.id, links: factLinks(fact.evidence) },
         fact.text,
       ),
     );

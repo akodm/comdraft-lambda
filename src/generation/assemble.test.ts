@@ -64,7 +64,7 @@ const run = (markdown: string, overrides: Partial<Parameters<typeof assemble>[0]
   });
 
 // 조립 결과를 GFM 으로 읽어 코드 블록, HTML, 링크, 이미지, 정의가 우리가 넣은 것 말고는 없는지 확인한다.
-const ALLOWED_HREFS = new Set(['https://ex.com/a', 'https://github.com/x', 'https://github.com/o/r/commit/a1b2c3d4e5f6', 'https://other.dev/x', 'https://example.com/post']);
+const ALLOWED_HREFS = new Set(['https://ex.com/a', 'https://github.com/x', 'https://other.dev/x', 'https://example.com/post']);
 const collectTokens = (tokens: Token[] | undefined, found: Token[]): void => {
   for (const token of tokens ?? []) {
     found.push(token);
@@ -136,9 +136,18 @@ describe('assemble', () => {
     );
   });
 
-  it('{{commit:C2}} → [a1b2c3d](url), {{link:L1}} → [제목](url)', () => {
-    const out = run('# 제목\n\n{{commit:C1}} 와 {{link:L1}} 참고');
-    assert.ok(out.includes('[a1b2c3d](https://github.com/o/r/commit/a1b2c3d4e5f6) 와 [좋은 글 \\[1\\]](https://example.com/post) 참고'));
+  it('{{link:L1}} → [제목](url)', () => {
+    const out = run('# 제목\n\n{{link:L1}} 참고');
+    assert.ok(out.includes('[좋은 글 \\[1\\]](https://example.com/post) 참고'));
+  });
+
+  it('{{commit:…}} 은 커밋 링크로 바꾸지 않고 지운다 (본문과 참고 절 모두 커밋 없음)', () => {
+    const out = run('# 제목\n\n고쳤다 {{commit:C1}} 그리고 {{link:L1}} 와 {{commit:C2}}');
+    assert.ok(!out.includes('{{'));
+    assert.ok(!out.includes('github.com/o/r/commit'), out);
+    assert.ok(!out.includes('a1b2c3d'), out);
+    assert.ok(!out.includes('ffeeddc'), out);
+    assert.ok(out.endsWith('\n\n## 참고\n\n- [좋은 글 \\[1\\]](https://example.com/post)'), out);
   });
 
   it('제목이 비면 호스트 이름을 링크 글자로 쓴다', () => {
@@ -478,7 +487,8 @@ describe('assemble', () => {
       assert.equal(probe('xwww.evil.com and _www.evil.com_'), 'x  and _');
       assert.equal(probe('mail evil@phish.com'), 'mail evil\\@phish.com');
       assert.equal(probe('x `evil@phish.com` y'), 'x evil\\@phish.com y');
-      assert.equal(probe('!{{commit:C1}}'), '\\![a1b2c3d](https://github.com/o/r/commit/a1b2c3d4e5f6)');
+      // 커밋 자리표시자는 공백으로 지워지므로 느낌표는 글자로만 남는다
+      assert.equal(probe('!{{commit:C1}} x'), '!  x');
     });
 
     it('들여쓰기 코드가 되는 깊은 들여쓰기는 3칸까지만 남는다', () => {

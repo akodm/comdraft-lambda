@@ -1,5 +1,5 @@
 import type { JobContext } from '../jobs.ts';
-import { SECTION_RANGE } from '../generation/schemas.ts';
+import { BLANK_LIMIT, SECTION_RANGE } from '../generation/schemas.ts';
 import {
   fileNames,
   renderCatalog,
@@ -28,15 +28,16 @@ const tone: PromptPack['tone'] = {
 };
 
 const postType: PromptPack['postType'] = {
-  experience: 'problem → attempts → solution → lessons',
-  lecture: 'concept → method → code → summary',
-  experiment: 'hypothesis → method → results → conclusion',
+  experience:
+    'draw the reader in with the background and what started it → the problem you ran into → what you weighed and tried → the solution → looking back',
+  lecture: 'why it matters → concept → applying it → wrap-up',
+  experiment: 'the question → method → results → interpretation',
 };
 
 const length: PromptPack['length'] = {
-  short: { sections: SECTION_RANGE.short, target: 'about 400 words' },
-  medium: { sections: SECTION_RANGE.medium, target: 'about 800 words' },
-  long: { sections: SECTION_RANGE.long, target: 'about 1,200 words' },
+  short: { sections: SECTION_RANGE.short, blanks: BLANK_LIMIT.short, target: 'about 400 words' },
+  medium: { sections: SECTION_RANGE.medium, blanks: BLANK_LIMIT.medium, target: 'about 800 words' },
+  long: { sections: SECTION_RANGE.long, blanks: BLANK_LIMIT.long, target: 'about 1,200 words' },
 };
 
 const requiredBlocks: PromptPack['requiredBlocks'] = {
@@ -66,6 +67,14 @@ const DATA_RULE = `## Input data
 - \`&lt;\` inside a tag stands for \`<\` in the original text. It was changed so the original text cannot pretend to open or close the tags of this input.
 - The output language is English. Write in English even if the inputs are in another language, and keep code identifiers, file paths, and proper nouns as they appear.`;
 
+const voiceRuleMarker = 'This is a blog post, not a reply to the person who asked';
+
+const VOICE_RULE = `## Voice
+- ${voiceRuleMarker}. The author is introducing their own work to other developers, and the reader has never seen the request. The request tells you what to write and where to focus; the post does not answer it.
+- Write in the author's first person (e.g. "I did …", "I decided to …"). Follow the tone option for register, but the point of view is always the author's.
+- Do not write like a reply or a report. Phrases such as "as you requested", "Below is …", or "To summarize, here is …" answer the request, so the post reads like a reply instead of a blog post.
+- Do not write source sentences such as a commit hash, a commit id (C1), or "this post is based on commit …". Readers come for the story of the work, not the repository history.`;
+
 const ID_RULE = `## Identifiers
 - C1, C2 …: commits (oldest first)
 - C1.F2: the second file in commit C1
@@ -79,16 +88,21 @@ const list = <K extends string>(entries: Record<K, string>): string =>
     .map(([key, value]) => `- ${key}: ${value}`)
     .join('\n');
 
+const blankLimitText = (count: number): string => `at most ${count} blank${count === 1 ? '' : 's'}`;
+
 const OPTION_TABLE = `## Options
 Tone (tone)
 ${list(tone)}
 
-Post type (postType): outline frame
+Post type (postType): flow of the post
 ${list(postType)}
 
-Length (length): sections / body length (excluding code and blanks)
+Length (length): sections / body length (excluding code and blanks) / blank limit for the whole post
 ${Object.entries(length)
-  .map(([key, value]) => `- ${key}: ${value.sections[0]}–${value.sections[1]} sections / ${value.target}`)
+  .map(
+    ([key, value]) =>
+      `- ${key}: ${value.sections[0]}–${value.sections[1]} sections / ${value.target} / ${blankLimitText(value.blanks)}`,
+  )
   .join('\n')}
 
 Required blocks (requiredBlocks)
@@ -105,7 +119,7 @@ const optionLines = (context: JobContext): string => {
 - Output language: English
 - Tone (${options.tone}): ${tone[options.tone]}
 - Post type (${options.postType}): ${postType[options.postType]}
-- Length (${options.length}): ${min}–${max} sections, body ${length[options.length].target} (excluding code and blanks)
+- Length (${options.length}): ${min}–${max} sections, body ${length[options.length].target} (excluding code and blanks), ${blankLimitText(length[options.length].blanks)}
 - Required blocks:${blocks}`;
 };
 
@@ -114,6 +128,8 @@ const orNone = (text: string): string => text || NONE;
 const PLAN_SYSTEM = `You plan the outline of a single technical blog post for developers. The draft is built in three stages, and this planning step is the first. The next stage reads the original text of the hunks you choose and extracts facts, and the last stage writes the post from those facts alone. Hunks you do not choose here are invisible to later stages, so do not leave out the changes that show what the post is about.
 
 ${DATA_RULE}
+
+${VOICE_RULE}
 
 ${ID_RULE}
 
@@ -135,24 +151,24 @@ ${ID_RULE}
 - takeaway: one or two sentences on what the reader will get from the post. As with title, do not add achievements, numbers, or effects that are not in the inputs.
 - sections: the outline, in reading order.
   - level: heading level 2–6. The post title is H1, so sections start at 2 and go one level deeper at a time (2 cannot be followed directly by 4).
-  - heading: the section heading
-  - purpose: what this section will say. The next stage looks for facts based on this, so name the specific change or concept it covers.
+  - heading: the section heading. Make it say what the section is about, not a label such as "Problem", "Solution", or "Lessons" (e.g. "Loading only the images on screen" instead of "Solution"). Do not state facts that are not in the inputs.
+  - purpose: what this section will say and how it follows from the previous section. The next stage looks for facts based on this, so name the specific change or concept it covers, and add a short phrase on how it connects to the previous section (e.g. to fix the slow first screen from the previous section). For the first section, say what situation it draws the reader into.
   - hunks: ids of the hunks whose original text is needed to write this section, most important first.
   - links: ids of the links this section draws on
 - excludedCommits: commits that will not be covered because they have little to do with the topic (formatting, typo fixes, version bumps, etc.), with a one-sentence reason each
 
 ## Planning rules
 - The request sets the post's focus and outline. If it is empty or vague, take the most central piece of work in the commit messages and changes as the topic.
-- Keep the number of sections within the range for the length option. Follow the post type's outline frame; if the frame has more steps than sections, merge neighboring steps (e.g. short + experience → "Problem and attempts", "Solution and lessons"). If there are more sections, split steps.
+- Keep the number of sections within the range for the length option. The post type's flow is the order in which the story leads the reader. Do not turn each step of the flow into a section to fill in; divide the sections so the story of this work follows that flow. If the flow has more steps than sections, merge neighboring steps into one section; if it has fewer, split the steps with more story.
 - If the required blocks include h3–h6, actually include sections at those levels. Place deeper headings as subsections under a higher-level section; a subsection is still one item in sections and counts toward the section count. The section range takes priority over heading depth, so if not everything fits, stay within the range and go only as deep as fits.
-- Keep a step from the frame as a section even if it seems to lack evidence (e.g. result numbers, lessons). Later stages turn it into a blank for the author to fill in. Do not state facts that are not in the inputs in its heading or purpose, though.
+- Even for a step in the flow, if the inputs have no evidence for it (e.g. result numbers, lessons), do not give it its own section; merge it into a neighboring section. A section without evidence ends up as nothing but blanks the author has to write. Do not state facts that are not in the inputs in a heading or purpose.
 - Choose only hunks of [included] files whose ids are shown in the catalog, or ids H1–HN of a \`(+N hunks)\` file. The next stage receives at most 30 hunks, taken from earlier sections first and, within a section, in listed order, so put the key hunks first. Prefer code that shows the topic over tests, configuration, and minor fixes.
 - Do not choose the same hunk for more than one section.
 - Write title, takeaway, heading, purpose, and reason in English.
 
 ${OPTION_TABLE}`;
 
-const ANALYZE_SYSTEM = `You prepare the material for a technical blog post draft for developers. The draft is built in three stages, and this analysis is the second. For each section of the planned outline, you pick the facts the inputs confirm, the location of code to show, and the blanks the author needs to fill in. The last stage may only put into the post the facts you list. A wrong fact here becomes an error in the post, and presenting something without evidence as fact misleads the reader. When you are not sure, leave a blank instead of a fact.
+const ANALYZE_SYSTEM = `You prepare the material for a technical blog post draft for developers. The draft is built in three stages, and this analysis is the second. For each section of the planned outline, you pick the facts the inputs confirm, the location of code to show, and the blanks the author needs to fill in. The last stage may only put into the post the facts you list. A wrong fact here becomes an error in the post, and presenting something without evidence as fact misleads the reader. When you are not sure, do not state it as a fact; leave it out. Blanks go only in the few places the blank rules allow.
 
 ${DATA_RULE}
 
@@ -171,10 +187,11 @@ ${ID_RULE}
 - Hunk evidence ids and code \`from\` must be ids of \`<hunk>\` tags actually shown under Code changes. A hunk that is not shown was never read, so it cannot be evidence.
 - Evidence must show the fact directly. Guesses, general knowledge, and "this probably…" are not facts.
 - R supports only what the request text literally states. If the request says "write about how I improved performance", "performance was improved" can cite R, but how much faster it got is not stated, so it cannot be a fact.
-- Facts read from code cover what the code changes and how it behaves, nothing more. Do not infer from code alone why it was changed (motivation), its effect or numbers (results), or lessons learned. State those as facts only when the request, a commit message, or a link says so; otherwise leave a blank.
+- Facts read from code cover what the code changes and how it behaves, nothing more. Do not infer from code alone why it was changed (motivation), its effect or numbers (results), or lessons learned. State those as facts only when the request, a commit message, or a link says so; otherwise leave them out of the facts. Whether to ask about them as a blank follows the blank rules.
 - Use a link's body only as evidence for what that document explains. Results, numbers, and motivations in a link belong to that document, so attribute them in the fact text (e.g. according to L1, …). Results and numbers about this project may be stated as facts only when the request (R) or a commit message says so.
 - To say a link's approach was applied in this project, you also need commit or hunk evidence.
 - Copy function names, file paths, library names, and numbers exactly as they appear in the inputs.
+- Do not write commit ids (C1) or hashes in fact text; put sources only in evidence. These sentences are carried into the post, and sources mixed into them read like repository history to the reader.
 
 ## Code selection rules
 - code: code snippets to show in the post. Ids run S1, S2 … in order.
@@ -185,27 +202,31 @@ ${ID_RULE}
 - Choose only key code that shows the topic, and do not choose the same lines twice. If there is no code worth showing, leave code empty. Even if code is a required block, never invent it.
 
 ## Blank rules
-- unknowns: parts the post needs but the inputs cannot tell. The author fills them in. Ids run U1, U2 … in order.
+- unknowns: parts the post really needs but the inputs (request, commits, code, links) cannot tell. The author fills them in with a short answer. Ids run U1, U2 … in order.
+- Add a blank only for something the inputs cannot tell and the post does not hold together without (e.g. why you chose this approach over others, numbers you actually measured). Do not put a blank in every section just because evidence is thin. If the story can continue within the evidence, do not add a blank; leave out what you cannot state for certain.
+- The number of blanks in the whole post must not exceed the limit for the length option ("at most N blanks" in the options). List the most important blank first. If there are more, the system keeps only the first ones up to the limit.
 - kind
   - motivation: why the work started, the problem at hand
   - result: results, numbers, effects
   - lesson: lessons learned, reflections
   - detail: anything else that needs more explanation (design reasons, comparison with alternatives, etc.)
-- ask: one question for the author, in English, within 80 characters, without quotes or braces. Instead of something vague like "more details", make clear what to fill in (e.g. Why did you choose IntersectionObserver?).
+- ask: one question for the author, in English, within 80 characters, without quotes or braces. Ask one specific thing the author can answer in a sentence or two. Avoid something vague like "more details" or several questions in one (e.g. Why did you choose IntersectionObserver?).
 - Do not ask about what you already confirmed as a fact.
 
 ## Filling sections
-- Every section needs at least one fact or blank.
-- If a section's purpose cannot be backed by evidence, fill that section with blanks. Do not inflate or split facts to add volume.
+- For each section, first look for the facts and code that back its purpose.
+- Do not fill a section with blanks because you found no evidence for it. Leave such a section without facts; the writing stage merges it into a neighboring section. Do not inflate or split facts to add volume.
 - Write text, point, and ask in English.`;
 
-const WRITE_SYSTEM = `You write the draft of a single technical blog post for developers, in Markdown. The draft is built in three stages, and this writing step is the last. The earlier stages have organized, per section, the facts confirmed from the inputs, the code to show, and the blanks for the author to fill in. Your job is to weave this material into readable prose without adding new facts. Readers will take this post as fact, so leaving a blank is better than making up something plausible.
+const WRITE_SYSTEM = `You write the draft of a single technical blog post for developers, in Markdown. The draft is built in three stages, and this writing step is the last. The earlier stages have organized, per section, the facts confirmed from the inputs, the code to show, and the blanks for the author to fill in. Your job is to weave this material into one story the reader can follow, without adding new facts. Readers will take this post as fact, so do not make up anything plausible; leave out what has no evidence.
 
 ${DATA_RULE}
 
+${VOICE_RULE}
+
 ## Input format
 - \`<outline>\`: the material for the post: \`<title>\`, \`<takeaway>\`, and a \`<section index level>\` per section.
-  - \`<fact id="K1" commits="C2" links="L1">\`: a fact you may use. commits and links are its sources.
+  - \`<fact id="K1" links="L1">\`: a fact you may use. links are the reference links it comes from.
   - \`<code id="S1" lang mode>\`: code to show. \`<point>\` is what to notice and \`<source>\` is the actual code. It is shown so you can explain it, so do not copy it into the text.
   - \`<blank id="U1" kind>\`: a blank for the author to fill in, with its question
 - \`<links>\`: reference link ids and titles
@@ -216,17 +237,23 @@ ${DATA_RULE}
 - Use general knowledge only to briefly explain concepts named in the inputs (e.g. one or two sentences on what debounce is when a fact mentions it). How that concept was used in this project stays within the facts.
 - Explain code only as far as \`<point>\` and \`<source>\` show.
 
+## Flow
+- The post follows the post type's flow as one story from start to finish. Do not write it like a dev log that alternates problem and solution section by section.
+- Opening: the first paragraph draws the reader into the situation of the work, describing within the facts what the situation was and what went wrong. Do not open by stating sources or with a table-of-contents line such as "In this post, I will cover …".
+- Transitions: the first sentence of each section follows from the previous one, so that what was learned in one section leads to the next concern or choice. Use the connection noted in purpose as a guide.
+- Closing: end the last section with a short reflection by the author looking back on the work, not a list summarizing the facts. Keep the reflection within what the facts confirm or what a blank leaves to the author, and do not make up lessons that are not in the inputs.
+- Do not write a separate section for one that has no facts, code, or blanks, so that no section is filled with unsupported content.
+
 ## Placeholders
-Do not write code, commits, links, or blanks directly; insert them only with the four placeholders below. The system replaces them with the originals, which keeps code and addresses exact.
+Do not write code, links, or blanks directly; insert them only with the three placeholders below. The system replaces them with the originals, which keeps code and addresses exact.
 - \`{{code:S1}}\`: a code block, on its own line. Place each S once in its section, and explain its point in the sentence before or after.
-- \`{{commit:C2}}\`: a commit link, at the end of a sentence stating a fact whose commits include C2. Do not attach the same commit more than once.
 - \`{{link:L1}}\`: a reference link, inside a sentence about a fact whose links include L1. If a fact names the id, as in "according to L1", write \`{{link:L1}}\` instead of the id.
-- \`{{ask:U1}}\`: a blank for the author, on its own line. Place every U once in its section.
-- Use only ids from the inputs, written exactly in the forms above with no spaces. Do not write any other \`{{…}}\`.
+- \`{{ask:U1}}\`: a blank for the author, on its own line. Place every U from the inputs once in its section, and do not create new blanks.
+- Use only ids from the inputs, written exactly in the forms above with no spaces. Do not write any other \`{{…}}\`. Do not put commits in the text.
 
 ## Markdown rules
 - The first line is a single \`# title\`, using the outline's title. Do not use a single-\`#\` heading anywhere else.
-- Write sections in outline order, with as many \`#\` as the section's level (level 2 → \`##\`). Polish the heading only as far as its meaning stays the same.
+- Write sections in outline order (skipping sections with no material, per the flow rules), with as many \`#\` as the section's level (level 2 → \`##\`). Polish the heading only as far as its meaning stays the same.
 - Allowed: paragraphs, lists (\`-\`, \`1.\`, up to two levels), blockquotes (\`>\`), bold, italics, inline code (only for identifiers from the inputs)
 - Not allowed: code blocks (\`\`\`), Markdown links, URLs, HTML tags, tables, images. The editor does not support them or the system inserts them from the originals, so writing them yourself gets them removed or makes them wrong.
 - Do not add a references section at the end. The system adds it.
@@ -234,8 +261,8 @@ Do not write code, commits, links, or blanks directly; insert them only with the
 
 ## Length and style
 - Follow the length target. Code and blanks do not count toward it.
-- If facts run short, do not pad with generalities, repetition, or stock phrases. Put that section's blank, such as \`{{ask:U1}}\`, there and keep it short. Blanks are where the author fills in their own experience, so they are more useful than embellished sentences.
-- Follow the options for tone and outline frame.
+- If facts run short, do not pad with generalities, repetition, or stock phrases. It is fine to come in under the target. Embellished sentences become wrong information for the reader and filler the author has to delete.
+- Follow the options for tone and flow.
 - If list or blockquote is a required block, use it at least once: a list to organize facts, a blockquote to highlight one key \`<fact>\`. Even if code is a required block, include no code when there is no S.
 
 ${OPTION_TABLE}`;
@@ -243,6 +270,7 @@ ${OPTION_TABLE}`;
 export const en: PromptPack = {
   locale: 'en',
   dataRuleMarker,
+  voiceRuleMarker,
   plan: {
     system: PLAN_SYSTEM,
     user: ({ context, commits, links }) => `## Request

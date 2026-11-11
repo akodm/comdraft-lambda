@@ -166,6 +166,7 @@ export const createClaudePipeline = ({
       commitIds: new Set(commits.map((commit) => commit.id)),
       linkIds: new Set(links.map((link) => link.id)),
       blankDefaults: pack.blankDefaults,
+      length: context.length,
     });
 
     return { ...classified, analysis };

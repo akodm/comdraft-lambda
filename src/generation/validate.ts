@@ -2,6 +2,7 @@ import { MAX_CODE_LINES } from './limits.ts';
 import type { PreparedHunk } from './prepare.ts';
 import {
   BLANK_KINDS,
+  BLANK_LIMIT,
   CODE_MODES,
   EVIDENCE_PATTERN,
   SECTION_RANGE,
@@ -42,6 +43,12 @@ const sectionRange = (length: string): [number, number] =>
   Object.hasOwn(SECTION_RANGE, length)
     ? SECTION_RANGE[length as keyof typeof SECTION_RANGE]
     : SECTION_RANGE.medium;
+
+// 알 수 없는 length 는 절 수 범위와 같이 medium 상한을 쓴다
+const blankLimit = (length: string): number =>
+  Object.hasOwn(BLANK_LIMIT, length)
+    ? BLANK_LIMIT[length as keyof typeof BLANK_LIMIT]
+    : BLANK_LIMIT.medium;
 
 // 없는 hunk·link 번호를 빼고, 절 수를 길이 범위로 자르고, level 건너뜀을 고친다.
 export const validatePlan = (
@@ -99,7 +106,8 @@ const maxUnknownNumber = (unknowns: RawAnalysis['unknowns']): number =>
 
 // 근거 없는 사실, 잘못된 코드 위치를 버리고 빈칸 문구를 정리한다.
 // 목록 밖의 코드 표시 방식은 after, 빈칸 종류는 detail 로 바꾼다.
-// 사실도 unknown 도 없는 절에는 detail 빈칸을 만든다.
+// 빈칸은 길이별 상한(BLANK_LIMIT)까지만 앞에서부터 남긴다. 재료가 없는 절은 작성 단계가 이웃 절과 합치므로 빈칸을 더하지 않는다.
+// 다만 글 전체에 사실·코드·빈칸이 하나도 없으면 본문을 쓸 수 없으므로 첫 절에 detail 빈칸 하나를 둔다.
 export const validateAnalysis = (
   analysis: RawAnalysis,
   ctx: {
@@ -108,6 +116,7 @@ export const validateAnalysis = (
     commitIds: Set<string>;
     linkIds: Set<string>;
     blankDefaults: Record<BlankKind, string>;
+    length: string;
   },
 ): Analysis => {
   const sectionCount = ctx.plan.sections.length;
@@ -130,6 +139,7 @@ export const validateAnalysis = (
 
   const unknowns = analysis.unknowns
     .filter((unknown) => inRange(unknown.section))
+    .slice(0, blankLimit(ctx.length))
     .map((unknown) => {
       const kind = toBlankKind(unknown.kind);
       return {
@@ -139,19 +149,13 @@ export const validateAnalysis = (
       };
     });
 
-  let nextUnknown = maxUnknownNumber(analysis.unknowns) + 1;
-  for (let section = 0; section < sectionCount; section += 1) {
-    const covered =
-      facts.some((f) => f.section === section) ||
-      unknowns.some((u) => u.section === section);
-    if (covered) continue;
+  if (sectionCount > 0 && facts.length + code.length + unknowns.length === 0) {
     unknowns.push({
-      id: `U${nextUnknown}`,
-      section,
+      id: `U${maxUnknownNumber(analysis.unknowns) + 1}`,
+      section: 0,
       kind: 'detail',
       ask: ctx.blankDefaults.detail,
     });
-    nextUnknown += 1;
   }
 
   return { facts, code, unknowns };
