@@ -445,7 +445,7 @@ describe('createClaudePipeline', () => {
 
       const reviseFails = fakeLlm(PLAN, ANALYSIS, MARKDOWN, {
         review: { issues: [ISSUE] },
-        revised: new Error('network down'),
+        revised: new GenerationFailure('internal'),
       });
       const reviseResult = await run(reviseFails.llm);
       assert.ok(reviseResult.markdown.includes('지연 로딩을 넣었다'));
@@ -462,7 +462,7 @@ describe('createClaudePipeline', () => {
     });
 
     it('reportError 가 없어도 검토 실패는 조용히 넘어간다', async () => {
-      const { llm } = fakeLlm(PLAN, ANALYSIS, MARKDOWN, { review: new Error('boom') });
+      const { llm } = fakeLlm(PLAN, ANALYSIS, MARKDOWN, { review: new GenerationFailure('internal') });
       const pipeline = createClaudePipeline({
         llm,
         fetchLinks: async () => LINKS,
@@ -505,6 +505,54 @@ describe('createClaudePipeline', () => {
       assert.equal(writes.length, 2);
       assert.ok(markdown.includes('이미지를 늦게 불러오도록 바꿨다'));
       assert.ok(!markdown.includes('```markdown'));
+    });
+
+    it('검토를 건너뛰어도 바깥 펜스로 감싼 초안은 펜스를 벗겨 조립한다', async () => {
+      const fenced = `\`\`\`markdown\n${MARKDOWN}\n\`\`\``;
+      const { llm } = fakeLlm(PLAN, ANALYSIS, fenced);
+      const { markdown } = await run(llm, { remainingTimeMs: () => 59_999 });
+
+      assert.ok(markdown.startsWith('# 지연 로딩'));
+      assert.ok(!markdown.includes('```markdown'));
+      assert.ok(markdown.includes('```ts'));
+    });
+
+    it('고쳐 쓴 초안이 조립에서 막히면 원래 초안을 조립하고 reportError 를 부른다', async () => {
+      // 고쳐 쓴 초안은 acceptRevision 은 통과하지만 본문이 없어 조립이 invalid_result 로 던진다
+      const original = '# 지연 로딩\n\n지연 로딩을 넣었다';
+      const { llm } = fakeLlm(PLAN, ANALYSIS, original, {
+        review: { issues: [ISSUE] },
+        revised: '# 지연 로딩',
+      });
+      const { markdown, errors } = await run(llm);
+
+      assert.ok(markdown.includes('지연 로딩을 넣었다'));
+      assert.equal(errors.length, 1);
+      assert.equal((errors[0] as GenerationFailure).code, 'invalid_result');
+    });
+
+    it('GenerationFailure 가 아닌 오류(사용량 기록 실패 등)는 삼키지 않고 던진다', async () => {
+      const { llm } = fakeLlm(PLAN, ANALYSIS, MARKDOWN);
+      const pipeline = createClaudePipeline({
+        llm,
+        fetchLinks: async () => LINKS,
+        remainingTimeMs: () => 300_000,
+      });
+      let calls = 0;
+      const input: PipelineInput = {
+        context: CONTEXT,
+        commits: COMMITS,
+        // 기획·분석·작성 호출은 통과하고 검토 호출(네 번째)에서 던진다
+        onUsage: async () => {
+          calls += 1;
+          if (calls === 4) throw new Error('db down');
+        },
+      };
+      const prepared = await pipeline.prepare(input);
+      const analyzed = await pipeline.analyze(input, await pipeline.classify(input, prepared));
+      const written = await pipeline.write(input, analyzed);
+
+      await assert.rejects(pipeline.review(input, written), /db down/);
     });
 
     it('검토·고쳐 쓰기 사용량도 onUsage 로 보고한다', async () => {

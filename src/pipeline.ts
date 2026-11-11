@@ -229,9 +229,20 @@ export const createClaudePipeline = ({
     // 검토 quote 가 초안에서 찾아지도록 작성이 감싼 바깥 펜스를 먼저 푼다
     const draft = unwrapOuterFence(written.draft);
     const base = { context, plan, analysis, hunks: selected, links, draft };
+    const assembleInput = {
+      analysis,
+      commits,
+      hunks: selected,
+      links,
+      request: context.prompt,
+      referencesHeading: pack.referencesHeading,
+    };
+    // 검토 결과로 쓸 초안 (고쳐 쓴 초안이 없거나 쓸 수 없으면 원래 초안)
     let final = draft;
+    let assembled: string | null = null;
 
-    // 검토는 덤이라 어느 단계가 실패해도 원래 초안으로 조립한다
+    // 검토는 덤이라 LLM 단계(GenerationFailure)가 실패해도 원래 초안으로 조립한다
+    // 그 밖의 오류(사용량 기록 실패 등)는 작업 실패로 이어지도록 그대로 던진다
     try {
       if (remainingTimeMs() >= REVIEW_MIN_REMAINING_MS) {
         const raw = await llm.parse({
@@ -257,24 +268,26 @@ export const createClaudePipeline = ({
           );
 
           if (accepted) {
-            final = accepted;
+            // 고쳐 쓴 초안이 조립에서 막히면 원래 초안으로 되돌린다
+            try {
+              assembled = assemble({ ...assembleInput, markdown: accepted });
+            } catch (error) {
+              reportError?.(error);
+            }
           } else {
             reportError?.(new GenerationFailure('invalid_result'));
           }
         }
       }
     } catch (error) {
+      if (!(error instanceof GenerationFailure)) {
+        throw error;
+      }
+
       reportError?.(error);
     }
 
-    return assemble({
-      markdown: final,
-      analysis,
-      commits,
-      hunks: selected,
-      links,
-      request: context.prompt,
-      referencesHeading: pack.referencesHeading,
-    });
+    // 원래 초안을 조립하지 못하면 작업이 실패해야 하므로 어떤 대체 처리도 두지 않는다
+    return assembled ?? assemble({ ...assembleInput, markdown: final });
   },
 });
