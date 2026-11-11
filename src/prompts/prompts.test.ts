@@ -352,6 +352,25 @@ describe('linkary 비교 실행에서 찾은 규칙', () => {
   }
 });
 
+// linkary 비교 실행 두 번째: 요청이 짝지은 원인을 설정 절에 둠, 인용이 바로 앞 문장을 되풀이함
+describe('원인 짝 배치와 인용 반복 규칙', () => {
+  const PHRASES = {
+    ko: { planCause: '해결로 든 변경 B 를 다루는 절의 purpose 에 적는다', analyzeExample: '컴포넌트와 훅을 다루는 절의 사실이고', quote: '인용은 바로 앞뒤 문장을 되풀이하지 않는다' },
+    en: { planCause: 'write that cause in the purpose of the section about change B', analyzeExample: 'that reason is a fact of the section about the component and hooks', quote: 'A blockquote does not repeat the sentence right before or after it' },
+  } as const;
+
+  for (const pack of packs) {
+    const phrase = PHRASES[pack.locale];
+    it(`${pack.locale}: 기획·분석은 요청의 원인을 해결 변경의 절에 두고, 작성은 인용으로 되풀이하지 않는다`, () => {
+      assert.ok(pack.plan.system.includes(phrase.planCause));
+      assert.ok(pack.analyze.system.includes(phrase.analyzeExample));
+      for (const stage of [pack.write, pack.revise]) {
+        assert.ok(stage.system.includes(phrase.quote));
+      }
+    });
+  }
+});
+
 describe('독자 기준과 요청·링크·빈칸 답 규칙', () => {
   it('기획·분석·작성·빈칸 채우기 system 은 독자 규칙을 담는다', () => {
     assert.equal(getPromptPack('ko').readerRuleMarker, '독자는 이 저장소와 코드, 요청 문구를 본 적이 없다');
