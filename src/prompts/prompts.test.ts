@@ -177,14 +177,14 @@ describe('링크 근거 문구', () => {
 describe('비교 실행에서 찾은 문제 규칙', () => {
   const PHRASES = {
     ko: {
-      assertive: '"~한 것으로 보인다", "~로 추정된다" 처럼 쓰지 않는다',
+      assertive: '"~한 것으로 보인다", "~로 추정된다"',
       blank: '빈칸 자리를 예고하거나 가리키는 문장',
       reviewNoNewName: '초안에 없는 이름을 새로 넣으라고 하지 않는다',
       reviseNoNewName: '초안에 없던 이름(식별자, 파일 경로)은 fix 가 넣으라고 해도 새로 넣지 않는다',
       linkOnce: '한 문단에 같은 링크를 두 번 넣지 않는다',
     },
     en: {
-      assertive: 'Do not write "it appears that …" or "this seems to …"',
+      assertive: 'Do not write "it appears that …", "this seems to …"',
       blank: 'sentences that announce or point at a blank',
       reviewNoNewName: 'do not ask to add a name that is not in the draft',
       reviseNoNewName: 'Do not add a name (identifier, file path) that was not in the draft, even if the fix asks for it',
@@ -307,6 +307,47 @@ describe('운영 작업 기록에서 찾은 요청·빈칸 규칙', () => {
 
     it(`${pack.locale}: 빈칸 다듬기는 답에 없는 판단을 덧붙이지 않는다`, () => {
       assert.ok(pack.fill.system.includes(phrase.fillNoAdd));
+    });
+  }
+});
+
+// linkary 비교 실행에서 남은 문제: 요청 이유가 사실로 안 옮겨져 다시 묻는 빈칸, 다른 모양의 추측 말투,
+// 빈칸 예고 문장, 검토가 빈칸을 지우라고 해 고쳐 쓰기가 버려짐
+describe('linkary 비교 실행에서 찾은 규칙', () => {
+  const PHRASES = {
+    ko: {
+      requestEach: '요청은 문장 하나씩 읽고',
+      blankCheck: '질문의 답이 이미 있으면 빈칸을 만들지 않는다',
+      hedge: '"~로 볼 수 있다", "~로 읽을 수 있다"',
+      beforeBlank: '빈칸 바로 앞뒤 문장은 빈칸이나 그 질문을 소개하거나 예고하지 않고',
+      reviewKeepBlank: 'fix 는 빈칸(`{{ask:…}}`)을 지우거나',
+    },
+    en: {
+      requestEach: 'Read the request one sentence at a time',
+      blankCheck: 'do not make the blank if its answer is already there',
+      hedge: '"this can be seen as …", or "this can be read as …"',
+      beforeBlank: 'The sentences right before and after a blank do not introduce or announce the blank',
+      reviewKeepBlank: 'A fix must not ask to remove a blank',
+    },
+  } as const;
+
+  for (const pack of packs) {
+    const phrase = PHRASES[pack.locale];
+
+    it(`${pack.locale}: 분석은 요청 문장마다 사실을 만들고, 답이 있는 질문은 빈칸으로 만들지 않고, 다른 추측 말투도 막는다`, () => {
+      for (const key of ['requestEach', 'blankCheck', 'hedge'] as const) {
+        assert.ok(pack.analyze.system.includes(phrase[key]), key);
+      }
+    });
+
+    it(`${pack.locale}: 작성과 고쳐 쓰기는 빈칸 앞뒤에 예고 문장을 쓰지 않는다`, () => {
+      for (const stage of [pack.write, pack.revise]) {
+        assert.ok(stage.system.includes(phrase.beforeBlank));
+      }
+    });
+
+    it(`${pack.locale}: 검토는 빈칸을 지우라고 하지 않는다`, () => {
+      assert.ok(pack.review.system.includes(phrase.reviewKeepBlank));
     });
   }
 });

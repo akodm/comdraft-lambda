@@ -234,10 +234,11 @@ ${ID_RULE}
 - Every fact needs at least one evidence id. The only usable ids are commits (C1), hunks (C1.F2.H1), links (L1), and the request (R). File ids (C1.F2) cannot be evidence.
 - Hunk evidence ids and code \`from\` must be ids of \`<hunk>\` tags actually shown under Code changes. A hunk that is not shown was never read, so it cannot be evidence.
 - Evidence must show the fact directly. Guesses, general knowledge, and "this probably…" are not facts.
-- State each fact as something the author did (e.g. "I changed … so that …", "I added … following the setup steps"). Do not write "it appears that …" or "this seems to …". The author does not guess about their own work, and this sentence goes into the post. If the evidence does not let you state it, do not leave it as a guess; do not make that fact.
+- State each fact as something the author did (e.g. "I changed … so that …", "I added … following the setup steps"). Do not write "it appears that …", "this seems to …", "this can be seen as …", or "this can be read as …". The author does not guess about their own work, and this sentence goes into the post. If the evidence does not let you state it, do not leave it as a guess; do not make that fact.
 - R supports only what the request text literally states, and you may make a fact from it only when both conditions hold. The request is guidance on the post's direction, so putting it in the facts carries its sentences straight into the post.
   1. It is an experience or fact the author states (motivation, results, numbers, a description of the project, impressions or opinions from using it).
   2. It fits the topic of the post and the purpose of the section the fact goes in.
+- Read the request one sentence at a time, and make an R fact for each sentence that states a reason, a problem the author ran into, how they solved it, or an impression. Reasons and impressions in the request are the author's own story that the code does not show; dropping them leaves only a code walkthrough and makes you ask the same thing again as a blank.
 - Keep impressions or opinions stated in the request (e.g. "it was easy to use") as R facts: only the author knows them. They are material for the closing reflection, and dropping them loses what the author wanted to say.
 - When the request pairs a cause with a fix (e.g. "because of A, I solved it by building B"), keep the pair. Put the cause only in the section that holds the change the request names as the fix, and do not move it to explain a different change. A broken pair gives the reader a wrong cause.
 - Do not turn instructions such as "write it in a friendly way", format or length requirements, or content unrelated to the topic into facts. Even a fact citing R is rewritten as a sentence for the reader, not copied from the request's wording. For example, if the request says "Deploys took 10 minutes so I added a cache. Make it friendly", "Each deploy took 10 minutes, so I added a cache" can cite R, but "make it friendly" is not a fact, and how much faster it got is not stated, so it cannot be a fact.
@@ -270,7 +271,7 @@ ${ID_RULE}
   - lesson: lessons learned, reflections
   - detail: anything else that needs more explanation (design reasons, comparison with alternatives, etc.)
 - ask: one question for the author, in English, within 80 characters, without quotes or braces. Ask one specific thing the author can answer in a sentence or two. Avoid something vague like "more details" or several questions in one (e.g. Why did you choose IntersectionObserver?).
-- Do not ask about what you already confirmed as a fact or what the request already says. Asking the author again for what they already said makes them write the same answer twice.
+- Do not ask about what you already confirmed as a fact or what the request already says. Asking the author again for what they already said makes them write the same answer twice. Before making a blank, look at the request and the R facts again, and do not make the blank if its answer is already there (e.g. if the request says "I could not put defaults in the config, so I built a dedicated component and hooks", do not ask why you built that component and those hooks; if it says "it was easy to use", do not ask how it went after using it).
 
 ## Filling sections
 - For each section, first look for the facts and code that back its purpose.
@@ -302,6 +303,7 @@ Do not write code, links, or blanks directly; insert them only with the three pl
   - If you drew on an article or discussion link, say what you drew on where that content comes up. A link left only in the references gives the reader no reason to read it.
   - Keep what the document says brief, only as much as this work needs.
 - \`{{ask:U1}}\`: a blank for the author, on its own line. Place every U from the inputs once in its section, and do not create new blanks.
+  - The sentences right before and after a blank do not introduce or announce the blank or its question; end with the section's facts instead (do not write sentences such as "I'll explain why below" or "let me go over this once more"). Once the author fills the blank, that spot becomes body text, so an announcing sentence stays behind and reads oddly.
 - Use only ids from the inputs, written exactly in the forms above with no spaces. Do not write any other \`{{…}}\`. Do not put commits in the text.`;
 
 const MARKDOWN_RULE = `## Markdown rules
@@ -358,7 +360,7 @@ const reviewKindText: Record<ReviewKind, string> = {
   unsupported:
     'A fact, number, cause, or effect that is not in the material (`<fact>`, `<point>`, `<source>`, or the question of a `<blank>`). Sentences that set up a cause ("so", "because") or a problem or conflict ("the problem I ran into") not in the facts are also this problem. General knowledge that briefly explains a concept named in the inputs, and sentences that describe an internal name by what it does, are not problems.',
   voice:
-    'Sentences written like a reply or a report ("as you requested", "Below is …"), a point of view other than the author\'s first person, guessing about the author\'s own work ("this appears to …"), sentences that announce or point at a blank, or source sentences such as a commit hash or "this post is based on commit …".',
+    'Sentences written like a reply or a report ("as you requested", "Below is …"), a point of view other than the author\'s first person, guessing about the author\'s own work ("this appears to …", "this can be seen as …"), sentences that announce or point at a blank, or source sentences such as a commit hash or "this post is based on commit …".',
   flow:
     'A broken connection between sections, the same thing said twice (including the same change or document explanation appearing again in two or more sections), or a broken opening or closing rule. The opening must not start by stating sources or with a table-of-contents line such as "In this post, I will cover …", and the closing must not list a summary of the facts or make up lessons that are not in the material.',
 };
@@ -389,6 +391,7 @@ ${list(reviewKindText)}
 - List only problems you are sure of. List a problem only when you can clearly say it fits one of the kinds above; if in doubt, leave it out. One problem makes the whole draft get rewritten.
 - Do not list matters of taste, better wording, or minor word order or spelling. The tone option (register) and the length also follow the options, so do not point them out. Writing like a reply or a report is not a tone option; it is a voice problem.
 - Placeholders (\`{{…}}\`) are not problems. It is normal for code, links, and blanks to appear only as placeholders. Do not use a placeholder alone as a quote.
+- A fix must not ask to remove a blank (\`{{ask:…}}\`) or to write in the body what the blank is for. A blank is where the author writes, and the system discards a draft that lost a blank. If a sentence announcing a blank is the problem, ask to remove only that sentence.
 - For unsupported, check the draft against the material item by item, and list it only when it is nowhere in the material. Saying something from the material in other words is not a problem.
 - If the same problem appears in several places, list each place separately, but do not use the same quote twice.
 - If there are no problems, return issues as an empty list. For a well-written draft, an empty list is the right result. Do not hunt for problems to fill a count.`;
