@@ -31,7 +31,7 @@ const fakeClient = (reply: () => unknown) => {
   const calls: { method: 'create' | 'stream'; req: Req; options: Req }[] = [];
   const client = {
     messages: {
-      // 구조화 출력은 create 로 받아 직접 파싱하므로, 가짜도 원본 응답(text 블록)을 돌려준다
+      // 구조화 출력도 스트림의 최종 응답(text 블록)을 받아 직접 파싱하므로, 가짜도 원본 응답을 돌려준다
       create: async (req: Req, options: Req) => {
         calls.push({ method: 'create', req, options });
         return reply();
@@ -66,14 +66,15 @@ const rejectsLlmFailed = async (promise: Promise<unknown>) =>
   });
 
 describe('createAnthropicLlm.parse', () => {
-  it('model·effort·max_tokens·format 을 보내고 sampling·thinking 은 보내지 않는다', async () => {
+  it('model·effort·max_tokens·format 을 스트림으로 보내고 sampling·thinking 은 보내지 않는다', async () => {
     const { client, calls } = fakeClient(() => jsonReply('{"answer":"ok"}'));
 
     const result = await createAnthropicLlm(client).parse(parseReq);
 
     assert.deepEqual(result, { answer: 'ok' });
     const { method, req, options } = calls[0];
-    assert.equal(method, 'create');
+    // 사고 깊이를 올리면 응답이 길어져 한 번에 받는 요청은 끊기기 쉬워 구조화 출력도 스트림으로 받는다
+    assert.equal(method, 'stream');
     assert.equal(req.model, GENERATION_MODEL);
     assert.equal(req.model, 'claude-haiku-5-5');
     assert.equal(req.max_tokens, 8000);

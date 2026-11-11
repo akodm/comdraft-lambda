@@ -29,7 +29,7 @@ export interface BlankFiller {
 }
 
 // 다듬기는 짧은 글이라 사고 깊이를 낮게, 출력 상한은 사고 토큰을 감안해 넉넉하게
-export const FILL_STAGE = { effort: 'low', maxTokens: 4_000 } as const;
+export const FILL_STAGE = { effort: 'medium', maxTokens: 8_000 } as const;
 
 const buildPrompt = ({ context, blank, analysis }: FillInput) => {
   const pack = getPromptPack(context.locale);

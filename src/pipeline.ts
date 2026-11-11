@@ -99,14 +99,15 @@ export interface ClaudePipelineDependencies {
   reportError?: (error: unknown) => void;
 }
 
-const PLAN_STAGE = { effort: 'low', maxTokens: 8_000 } as const;
-// 분석은 hunk 원문과 링크 본문이 함께 들어가 입력이 크다. medium 이면 생각만으로 출력 상한(16,000)을 다 써
-// 결과 없이 끊기는 일이 있어(2fdbd57 커밋 실측: 생각 14,000~16,000토큰) low 로 둔다 (low 실측 13초, 출력 약 3,000토큰)
-const ANALYZE_STAGE = { effort: 'low', maxTokens: 16_000 } as const;
-const REVIEW_STAGE = { effort: 'low', maxTokens: 4_000 } as const;
+// 단계별 사고 깊이와 출력 상한 (Haiku 로 품질을 끌어올리려고 Lambda 900초, 호출 하나 180초 안에서 올렸다)
+// - 생각과 출력이 상한 안에 들어오도록 넉넉하게 잡는다 (분석은 low·16,000 에서 생각만으로 상한을 다 쓴 적이 있다)
+const PLAN_STAGE = { effort: 'medium', maxTokens: 16_000 } as const;
+const ANALYZE_STAGE = { effort: 'medium', maxTokens: 32_000 } as const;
+const REVIEW_STAGE = { effort: 'medium', maxTokens: 16_000 } as const;
 // 고쳐 쓰기 최대 횟수 (처음 한 번 + 검사에서 거절되면 이유를 알려 주고 한 번 더)
 const REVISE_ATTEMPTS = 2;
-const WORK_STAGE = { effort: 'medium', maxTokens: 16_000 } as const;
+// 글을 쓰는 작성·고쳐 쓰기는 한 단계 더 깊게(high) 생각한다
+const WORK_STAGE = { effort: 'high', maxTokens: 32_000 } as const;
 
 // 링크는 글의 보조 근거라 가져오기에 실패해도 작업을 멈추지 않는다
 const safeFetchLinks = async (

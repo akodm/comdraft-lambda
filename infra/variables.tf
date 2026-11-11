@@ -57,7 +57,7 @@ variable "anthropic_workspace_id" {
 variable "lambda_timeout_seconds" {
   description = "Lambda 실행 시간 제한 (Next.js lib/generation/contract.ts 의 GENERATION_LAMBDA_TIMEOUT_MS 와 맞출 것)"
   type        = number
-  default     = 300
+  default     = 900
 }
 
 variable "lambda_memory_mb" {

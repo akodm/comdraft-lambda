@@ -10,8 +10,8 @@ import type { z } from 'zod';
 import { GenerationFailure } from '../errors.ts';
 
 export const GENERATION_MODEL = 'claude-haiku-5-5';
-// 요청 하나의 제한 시간 (Lambda 전체 제한보다 짧게)
-export const LLM_TIMEOUT_MS = 75_000;
+// 요청 하나의 제한 시간 (Lambda 전체 제한 900초보다 짧게, 사고 깊이 medium·high 에서 출력 32,000토큰을 받을 수 있게)
+export const LLM_TIMEOUT_MS = 180_000;
 // 호출이 끝난 뒤 결과 저장이나 실패 기록에 남겨 두는 실행 시간
 export const SAFETY_MARGIN_MS = 15_000;
 // 이보다 짧은 제한 시간으로는 호출하지 않는다 (응답을 받기 어려워 시간 초과로 끝냄)
@@ -27,7 +27,7 @@ export interface LlmOptions {
 }
 
 // 사고 깊이 (adaptive thinking 은 기본 켜짐이라 thinking 은 보내지 않고 effort 로만 조절)
-export type Effort = 'low' | 'medium';
+export type Effort = 'low' | 'medium' | 'high';
 
 // 응답 하나를 받을 때마다 그 응답의 사용 토큰을 넘김 (할당량 기록용)
 export type OnUsage = (tokens: number) => void | Promise<void>;
@@ -152,20 +152,23 @@ export const createAnthropicLlm = (
   options: LlmOptions,
 ): LlmClient => ({
   // SDK 의 messages.parse 는 응답을 구조화 출력으로 바꾸다 실패하면 응답 없이 던지므로,
-  // create 로 받아 사용량을 먼저 보고한 뒤 직접 파싱한다
+  // 스트림의 최종 응답을 받아 사용량을 먼저 보고한 뒤 직접 파싱한다
+  // (사고 깊이를 올리면 응답이 길어져 한 번에 받는 요청보다 스트림이 끊기지 않는다)
   parse: async ({ system, user, schema, effort, maxTokens, onUsage }) => {
     const format = zodOutputFormat(schema);
     const message = await callWithDeadline(options, (requestOptions) =>
-      client.messages.create(
-        {
-          model: GENERATION_MODEL,
-          max_tokens: maxTokens,
-          system,
-          messages: [{ role: 'user', content: user }],
-          output_config: { effort, format },
-        },
-        requestOptions,
-      ),
+      client.messages
+        .stream(
+          {
+            model: GENERATION_MODEL,
+            max_tokens: maxTokens,
+            system,
+            messages: [{ role: 'user', content: user }],
+            output_config: { effort, format },
+          },
+          requestOptions,
+        )
+        .finalMessage(),
     );
 
     await reportUsage(message, onUsage);

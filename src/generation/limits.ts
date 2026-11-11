@@ -64,6 +64,7 @@ export const MAX_REVIEW_ISSUES = 8;
 export const REVIEW_FIX_MAX = 150;
 // 검토 프롬프트가 안내하는 quote 최대 글자 수 (검증은 초안에 있는지만 본다)
 export const REVIEW_QUOTE_MAX = 200;
-// 남은 시간이 이보다 적으면 검토·고쳐 쓰기를 건너뛴다 (LLM 제한 시간 75초 + 안전 여유 15초)
-export const REVIEW_MIN_REMAINING_MS = 60_000;
-export const REVISE_MIN_REMAINING_MS = 90_000;
+// 남은 시간이 이보다 적으면 검토를 건너뛴다 (검토는 출력이 짧아 호출 제한보다 짧게 잡는다)
+export const REVIEW_MIN_REMAINING_MS = 120_000;
+// 고쳐 쓰기 한 번 = 호출 하나의 제한(180초) + 저장 여유(15초)
+export const REVISE_MIN_REMAINING_MS = 195_000;

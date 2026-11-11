@@ -5,9 +5,9 @@ import type { CommitDetail } from './github.ts';
 import type { JobContext } from './jobs.ts';
 import type { PreparedLink } from './generation/links.ts';
 import { estimateJobTokens } from './generation/estimate.ts';
-import { estimateTokens } from './generation/limits.ts';
+import { estimateTokens, REVIEW_MIN_REMAINING_MS, REVISE_MIN_REMAINING_MS } from './generation/limits.ts';
 import { GenerationFailure } from './errors.ts';
-import type { LlmClient } from './generation/llm.ts';
+import type { Effort, LlmClient } from './generation/llm.ts';
 import type { Analysis, Plan } from './generation/schemas.ts';
 import type { StoredAnalysis } from './generation/stored-analysis.ts';
 import {
@@ -127,7 +127,7 @@ const fakeLlm = (
       system: string;
       user: string;
       schema: z.ZodType<T>;
-      effort: 'low' | 'medium';
+      effort: Effort;
       maxTokens: number;
       onUsage?: (tokens: number) => void | Promise<void>;
     }) => {
@@ -220,11 +220,12 @@ describe('createClaudePipeline', () => {
     assert.deepEqual(
       parses.map(({ effort, maxTokens }) => [effort, maxTokens]),
       // 분석은 입력이 커서 medium 이면 생각만으로 출력 상한을 다 쓸 수 있어 low (작성은 medium)
-      [['low', 8_000], ['low', 16_000], ['low', 4_000]],
+      // Haiku 로 품질을 끌어올리려고 사고 깊이와 출력 상한을 올렸다 (Lambda 900초, 호출 하나 180초)
+      [['medium', 16_000], ['medium', 32_000], ['medium', 16_000]],
     );
     assert.deepEqual(
       writes.map(({ effort, maxTokens }) => [effort, maxTokens]),
-      [['medium', 16_000]],
+      [['high', 32_000]],
     );
   });
 
@@ -536,20 +537,20 @@ describe('createClaudePipeline', () => {
       assert.equal(stillBadResult.errors.length, 2);
     });
 
-    it('다시 고쳐 쓸 시간이 90초보다 적게 남았으면 다시 고쳐 쓰지 않는다', async () => {
+    it('다시 고쳐 쓸 시간이 고쳐 쓰기 기준보다 적게 남았으면 다시 고쳐 쓰지 않는다', async () => {
       const { llm, writes } = fakeLlm(PLAN, ANALYSIS, MARKDOWN, {
         review: { issues: [ISSUE] },
         revised: REVISED.replace('{{ask:U1}}', ''),
         retried: REVISED,
       });
-      // 고쳐 쓰기 전까지는 넉넉하고, 첫 고쳐 쓰기를 마친 뒤에는 89.999초만 남는다
+      // 고쳐 쓰기 전까지는 넉넉하고, 첫 고쳐 쓰기를 마친 뒤에는 고쳐 쓰기 기준보다 1ms 적게 남는다
       let left = 300_000;
       const pipeline = createClaudePipeline({
         llm: {
           ...llm,
           write: async (req) => {
             const result = await llm.write(req);
-            if (writes.length === 2) left = 89_999;
+            if (writes.length === 2) left = REVISE_MIN_REMAINING_MS - 1;
             return result;
           },
         },
@@ -590,9 +591,9 @@ describe('createClaudePipeline', () => {
       assert.ok(markdown.includes('지연 로딩을 넣었다'));
     });
 
-    it('남은 시간이 60초 미만이면 검토를, 90초 미만이면 고쳐 쓰기를 부르지 않는다', async () => {
+    it('남은 시간이 검토 기준 미만이면 검토를, 고쳐 쓰기 기준 미만이면 고쳐 쓰기를 부르지 않는다', async () => {
       const noReview = fakeLlm(PLAN, ANALYSIS, MARKDOWN, { review: { issues: [ISSUE] } });
-      const first = await run(noReview.llm, { remainingTimeMs: () => 59_999 });
+      const first = await run(noReview.llm, { remainingTimeMs: () => REVIEW_MIN_REMAINING_MS - 1 });
       assert.equal(noReview.parses.length, 2);
       assert.equal(noReview.writes.length, 1);
       assert.ok(first.markdown.includes('지연 로딩을 넣었다'));
@@ -601,7 +602,7 @@ describe('createClaudePipeline', () => {
         review: { issues: [ISSUE] },
         revised: REVISED,
       });
-      const second = await run(noRevise.llm, { remainingTimeMs: () => 89_999 });
+      const second = await run(noRevise.llm, { remainingTimeMs: () => REVISE_MIN_REMAINING_MS - 1 });
       assert.equal(noRevise.parses.length, 3);
       assert.equal(noRevise.writes.length, 1);
       assert.ok(second.markdown.includes('지연 로딩을 넣었다'));
@@ -624,7 +625,7 @@ describe('createClaudePipeline', () => {
     it('검토를 건너뛰어도 바깥 펜스로 감싼 초안은 펜스를 벗겨 조립한다', async () => {
       const fenced = `\`\`\`markdown\n${MARKDOWN}\n\`\`\``;
       const { llm } = fakeLlm(PLAN, ANALYSIS, fenced);
-      const { markdown } = await run(llm, { remainingTimeMs: () => 59_999 });
+      const { markdown } = await run(llm, { remainingTimeMs: () => REVIEW_MIN_REMAINING_MS - 1 });
 
       assert.ok(markdown.startsWith('# 지연 로딩'));
       assert.ok(!markdown.includes('```markdown'));
