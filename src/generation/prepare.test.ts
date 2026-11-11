@@ -46,6 +46,36 @@ describe('prepareCommits', () => {
     assert.equal(index.get('C1.F1.H1')?.language, 'ts');
   });
 
+  it('다른 언어의 lock·빌드 결과물·생성 코드도 본문을 뺀다', () => {
+    const names = [
+      'target/release/app.d',
+      'core/target/classes/A.class.txt',
+      'Api/obj/project.assets.json',
+      '.gradle/8.5/checksums.txt',
+      'pkg/__pycache__/a.cpython-312.pyc',
+      'packages.lock.json',
+      'gradle.lockfile',
+      'Pipfile.lock',
+      'uv.lock',
+      'Podfile.lock',
+      'Package.resolved',
+      'mix.lock',
+      'pubspec.lock',
+      'api/user.pb.go',
+      'proto/user_pb2.py',
+      'Forms/Main.Designer.cs',
+    ];
+    const [c] = prepareCommits([commit('a', names.map((name) => file(name, PATCH)))]);
+    for (const f of c.files) assert.equal(f.body, 'excluded', f.filename);
+  });
+
+  it('Rails 의 bin 스크립트와 스키마, Go 의 cmd 는 본문을 남긴다', () => {
+    const [c] = prepareCommits([
+      commit('a', [file('bin/setup', PATCH), file('db/schema.rb', PATCH), file('cmd/server/main.go', PATCH)]),
+    ]);
+    for (const f of c.files) assert.equal(f.body, 'included', f.filename);
+  });
+
   it('lock·빌드 결과물은 본문을 뺀다', () => {
     const [c] = prepareCommits([
       commit('a', [file('pnpm-lock.yaml', PATCH), file('dist/x.js', PATCH), file('a.min.js', PATCH)]),
@@ -169,6 +199,22 @@ describe('languageForFile', () => {
     assert.equal(languageForFile('a/b.tsx'), 'tsx');
     assert.equal(languageForFile('a/b.mjs'), 'js');
     assert.equal(languageForFile('a/b.yml'), 'yaml');
-    assert.equal(languageForFile('Makefile'), 'plaintext');
+    assert.equal(languageForFile('a/b.unknown'), 'plaintext');
+  });
+
+  it('JS 밖의 언어와 확장자 없는 빌드 파일도 언어를 붙인다', () => {
+    assert.equal(languageForFile('src/main.cpp'), 'cpp');
+    assert.equal(languageForFile('include/a.hpp'), 'cpp');
+    assert.equal(languageForFile('lib/a.c'), 'c');
+    assert.equal(languageForFile('Api/UserService.cs'), 'csharp');
+    assert.equal(languageForFile('app/views/users/index.html.erb'), 'erb');
+    assert.equal(languageForFile('lib/tasks/seed.rake'), 'rb');
+    assert.equal(languageForFile('Cargo.toml'), 'toml');
+    assert.equal(languageForFile('pom.xml'), 'xml');
+    assert.equal(languageForFile('build.gradle'), 'groovy');
+    assert.equal(languageForFile('build.gradle.kts'), 'kt');
+    assert.equal(languageForFile('Gemfile'), 'rb');
+    assert.equal(languageForFile('docker/Dockerfile'), 'dockerfile');
+    assert.equal(languageForFile('Makefile'), 'makefile');
   });
 });

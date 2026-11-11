@@ -484,3 +484,44 @@ describe('validateAnalysis 구조화 출력 값 보정', () => {
     assert.equal(parsed.success, true);
   });
 });
+
+describe('validateAnalysis 언어별 블록 경계', () => {
+  const p = plan([section(2)]);
+  const pickOf = (from: string, startLine: number, endLine: number) => ({
+    id: 'S1', section: 0, from, startLine, endLine, mode: 'after' as const, point: 'p',
+  });
+  const rangeOf = (lines: string[], language: string, startLine: number, endLine: number) => {
+    const code: PreparedHunk = { id: 'C1.F1.H1', header: '@@', lines, redacted: false, language };
+    const out = validateAnalysis({ ...empty, code: [pickOf(code.id, startLine, endLine)] }, ctxFor(p, [code]));
+    return out.code.map((c) => [c.startLine, c.endLine]);
+  };
+
+  it('Ruby 는 def·do 블록이 end 로 닫힐 때까지 늘린다', () => {
+    const lines = [
+      '+class UsersController < ApplicationController',
+      '+  def index',
+      '+    @users = User.all.map do |user|',
+      "+      user.name # 주석 속 do 는 세지 않는다",
+      '+    end',
+      '+    render json: @users if @users.any?',
+      '+  end',
+      '+end',
+    ];
+    assert.deepEqual(rangeOf(lines, 'rb', 2, 4), [[2, 7]]);
+  });
+
+  it('Ruby 는 앞 블록의 end 로 시작하는 조각에서 그 줄을 건너뛴다', () => {
+    const lines = ['+    end', '+  end', '+', '+  def show', '+    @user = User.find(params[:id])', '+  end'];
+    assert.deepEqual(rangeOf(lines, 'rb', 1, 6), [[3, 6]]);
+  });
+
+  it('Rust 수명 표기는 문자열로 보지 않아 괄호 수가 틀어지지 않는다', () => {
+    const lines = [
+      "+fn first<'a>(items: &'a [String]) -> Option<&'a str> {",
+      "+    let sep = ',';",
+      '+    items.first().map(|s| s.as_str())',
+      '+}',
+    ];
+    assert.deepEqual(rangeOf(lines, 'rs', 1, 3), [[1, 4]]);
+  });
+});

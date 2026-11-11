@@ -142,13 +142,25 @@ type CodePick = RawAnalysis['code'][number];
 // 따옴표 안의 글자는 괄호로 세지 않는다 (문자열 속 '{' 때문에 잘못 늘리지 않게)
 const STRING_LITERAL = /(['"`])(?:\\.|(?!\1).)*\1/g;
 
-// 여는 괄호 수 - 닫는 괄호 수 (+, - 표시와 앞 공백 한 칸을 뗀 줄 기준)
-const bracketBalance = (lines: string[]): number =>
+// Rust 수명 표기('a, 'static)는 닫는 따옴표가 없어 문자열로 잘못 읽히므로 먼저 지운다 ('a' 같은 문자 리터럴은 남김)
+const RUST_LIFETIME = /'[A-Za-z_]\w*(?!['\w])/g;
+// Ruby 의 end 로 닫는 블록: 줄머리 키워드, 대입 오른쪽의 if·case 등, 줄 끝의 do (|인자| 포함)
+const RUBY_OPENER = /^(?:def|class|module|if|unless|while|until|case|begin|for)\b|=\s*(?:if|unless|case|begin)\b|\bdo(?:\s*\|[^|]*\|)?\s*$/;
+const RUBY_CLOSER = /^end\b/;
+const RUBY_COMMENT = /\s#.*$|^#.*$/;
+
+// 여는 괄호 수 - 닫는 괄호 수 (+, - 표시를 뗀 줄 기준, Ruby 는 end 로 닫는 블록도 센다)
+const blockBalance = (lines: string[], language: string): number =>
   lines.reduce((balance, line) => {
-    const code = line.slice(1).replace(STRING_LITERAL, '');
+    let code = line.slice(1);
+    if (language === 'rs') code = code.replace(RUST_LIFETIME, '');
+    code = code.replace(STRING_LITERAL, '');
     const opens = (code.match(/[{([]/g) ?? []).length;
     const closes = (code.match(/[})\]]/g) ?? []).length;
-    return balance + opens - closes;
+    if (language !== 'rb') return balance + opens - closes;
+    const trimmed = code.replace(RUBY_COMMENT, '').trim();
+    const keyword = (RUBY_OPENER.test(trimmed) ? 1 : 0) - (RUBY_CLOSER.test(trimmed) ? 1 : 0);
+    return balance + opens - closes + keyword;
   }, 0);
 
 // 글에 보이는 줄 (after 는 삭제 줄을 뺀다, buildCodeLines 와 같은 기준)
@@ -157,14 +169,14 @@ const visibleLines = (hunk: PreparedHunk, pick: CodePick, endLine: number): stri
   return toCodeMode(pick.mode) === 'diff' ? lines : lines.filter((line) => !line.startsWith('-'));
 };
 
-// 앞 블록의 닫는 줄(`);`, `}` 등)로 시작하는 조각은 그 줄들을 건너뛴다
+// 앞 블록의 닫는 줄(`);`, `}`, Ruby 의 `end` 등)로 시작하는 조각은 그 줄들을 건너뛴다
 // 여는 괄호가 나오기 전까지만 본다 (조각 끝에서 바깥 블록을 닫는 줄 때문에 본문을 버리지 않게)
 const skipLeadingClosers = (pick: CodePick, hunks: Map<string, PreparedHunk>): CodePick => {
   const hunk = hunks.get(pick.from) as PreparedHunk;
   let balance = 0;
   let startLine = pick.startLine;
   for (let line = pick.startLine; line <= pick.endLine; line += 1) {
-    balance += bracketBalance([hunk.lines[line - 1]]);
+    balance += blockBalance([hunk.lines[line - 1]], hunk.language);
     if (balance > 0) break;
     if (balance < 0) {
       startLine = line + 1;
@@ -177,10 +189,10 @@ const skipLeadingClosers = (pick: CodePick, hunks: Map<string, PreparedHunk>): C
 // 블록 중간에서 끝나는 조각은 괄호가 닫힐 때까지 끝줄을 늘린다 (hunk 끝과 MAX_CODE_LINES 안에서만, 못 닫으면 그대로)
 const closeOpenBlock = (pick: CodePick, hunks: Map<string, PreparedHunk>): CodePick => {
   const hunk = hunks.get(pick.from) as PreparedHunk;
-  if (bracketBalance(visibleLines(hunk, pick, pick.endLine)) <= 0) return pick;
+  if (blockBalance(visibleLines(hunk, pick, pick.endLine), hunk.language) <= 0) return pick;
   const lastLine = Math.min(hunk.lines.length, pick.startLine + MAX_CODE_LINES - 1);
   for (let endLine = pick.endLine + 1; endLine <= lastLine; endLine += 1) {
-    if (bracketBalance(visibleLines(hunk, pick, endLine)) <= 0) return { ...pick, endLine };
+    if (blockBalance(visibleLines(hunk, pick, endLine), hunk.language) <= 0) return { ...pick, endLine };
   }
   return pick;
 };

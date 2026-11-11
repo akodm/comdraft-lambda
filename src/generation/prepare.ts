@@ -52,6 +52,16 @@ const LOCK_FILES = new Set([
   'poetry.lock',
   'composer.lock',
   'Gemfile.lock',
+  'packages.lock.json',
+  'gradle.lockfile',
+  'Pipfile.lock',
+  'uv.lock',
+  'Podfile.lock',
+  'Package.resolved',
+  'mix.lock',
+  'pubspec.lock',
+  'npm-shrinkwrap.json',
+  'deno.lock',
 ]);
 const EXCLUDED_DIRS = new Set([
   'dist',
@@ -62,8 +72,18 @@ const EXCLUDED_DIRS = new Set([
   'node_modules',
   'vendor',
   '__snapshots__',
+  // Rust·Maven 빌드 결과, .NET 중간 산출물, Gradle 캐시, Python 바이트코드
+  // (Rails·Go 의 bin 은 손으로 쓴 스크립트라 빼지 않는다)
+  'target',
+  'obj',
+  '.gradle',
+  '__pycache__',
 ]);
-const EXCLUDED_SUFFIXES = ['.min.js', '.min.css', '.map', '.snap'];
+// 생성 코드: protobuf(Go·Python·C++), WinForms 디자이너
+const EXCLUDED_SUFFIXES = [
+  '.min.js', '.min.css', '.map', '.snap',
+  '.pb.go', '_pb2.py', '_pb2_grpc.py', '.pb.cc', '.pb.h', '.Designer.cs',
+];
 const BINARY_EXTENSIONS = new Set([
   'png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'bmp', 'avif', 'pdf',
   'woff', 'woff2', 'ttf', 'otf', 'eot',
@@ -73,7 +93,17 @@ const BINARY_EXTENSIONS = new Set([
 const LANGUAGES: Record<string, string> = {
   ts: 'ts', tsx: 'tsx', js: 'js', jsx: 'jsx', mjs: 'js', cjs: 'js', json: 'json', sql: 'sql',
   yaml: 'yaml', yml: 'yaml', md: 'md', css: 'css', scss: 'scss', html: 'html', sh: 'sh',
-  py: 'py', go: 'go', rs: 'rs', java: 'java', kt: 'kt', swift: 'swift', rb: 'rb', php: 'php',
+  py: 'py', go: 'go', rs: 'rs', java: 'java', kt: 'kt', kts: 'kt', swift: 'swift', rb: 'rb', php: 'php',
+  c: 'c', h: 'c', cpp: 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp', hh: 'cpp', hxx: 'cpp',
+  cs: 'csharp', scala: 'scala', groovy: 'groovy', gradle: 'groovy',
+  erb: 'erb', rake: 'rb', gemspec: 'rb', ru: 'rb',
+  toml: 'toml', xml: 'xml', proto: 'proto', graphql: 'graphql', gql: 'graphql',
+  vue: 'vue', svelte: 'svelte', dart: 'dart', lua: 'lua', ex: 'elixir', exs: 'elixir',
+};
+
+// 확장자가 없는 빌드·설정 파일
+const LANGUAGES_BY_NAME: Record<string, string> = {
+  Gemfile: 'rb', Rakefile: 'rb', Podfile: 'rb', Dockerfile: 'dockerfile', Makefile: 'makefile',
 };
 
 const extensionOf = (filename: string): string => {
@@ -83,7 +113,7 @@ const extensionOf = (filename: string): string => {
 };
 
 export const languageForFile = (filename: string): string =>
-  LANGUAGES[extensionOf(filename)] ?? 'plaintext';
+  LANGUAGES_BY_NAME[filename.split('/').pop() ?? filename] ?? LANGUAGES[extensionOf(filename)] ?? 'plaintext';
 
 // lock, 빌드 결과물, minified, 스냅샷은 본문을 넘기지 않는다
 const isExcludedFile = (filename: string): boolean => {
