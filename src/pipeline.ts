@@ -92,6 +92,9 @@ export interface ClaudePipelineDependencies {
 }
 
 const PLAN_STAGE = { effort: 'low', maxTokens: 8_000 } as const;
+// 분석은 hunk 원문과 링크 본문이 함께 들어가 입력이 크다. medium 이면 생각만으로 출력 상한(16,000)을 다 써
+// 결과 없이 끊기는 일이 있어(2fdbd57 커밋 실측: 생각 14,000~16,000토큰) low 로 둔다 (low 실측 13초, 출력 약 3,000토큰)
+const ANALYZE_STAGE = { effort: 'low', maxTokens: 16_000 } as const;
 const REVIEW_STAGE = { effort: 'low', maxTokens: 4_000 } as const;
 const WORK_STAGE = { effort: 'medium', maxTokens: 16_000 } as const;
 
@@ -182,7 +185,7 @@ export const createClaudePipeline = ({
       user: pack.analyze.user({ context, plan, commits, hunks: selected, links }),
       schema: AnalysisSchema,
       onUsage,
-      ...WORK_STAGE,
+      ...ANALYZE_STAGE,
     });
 
     const analysis = validateAnalysis(raw, {

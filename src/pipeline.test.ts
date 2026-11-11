@@ -209,7 +209,8 @@ describe('createClaudePipeline', () => {
     assert.ok(!markdown.includes('{{'));
     assert.deepEqual(
       parses.map(({ effort, maxTokens }) => [effort, maxTokens]),
-      [['low', 8_000], ['medium', 16_000], ['low', 4_000]],
+      // 분석은 입력이 커서 medium 이면 생각만으로 출력 상한을 다 쓸 수 있어 low (작성은 medium)
+      [['low', 8_000], ['low', 16_000], ['low', 4_000]],
     );
     assert.deepEqual(
       writes.map(({ effort, maxTokens }) => [effort, maxTokens]),
