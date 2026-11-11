@@ -479,7 +479,7 @@ const closesFence = (line: string, fence: string): boolean => {
 };
 
 // 모델이 글 전체를 코드 펜스 하나로 감싸 보냈으면 펜스만 벗긴다 (안쪽은 그대로 정리를 거친다)
-const unwrapOuterFence = (markdown: string): string => {
+export const unwrapOuterFence = (markdown: string): string => {
   const lines = markdown.replace(/\r\n?/g, '\n').trim().split('\n');
   const fence = OUTER_FENCE_OPEN.exec(lines[0])?.[1];
   if (!fence || lines.length < 2 || !closesFence(lines[lines.length - 1], fence)) return markdown;
