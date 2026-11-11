@@ -32,6 +32,8 @@ export interface PlanPromptInput {
   context: JobContext;
   commits: PreparedCommit[];
   links: PreparedLink[];
+  // 다시 기획할 때: 앞선 기획에 없던 필수 제목 수준 (처음 기획할 때는 없음)
+  missingLevels?: number[];
 }
 
 export interface AnalyzePromptInput {

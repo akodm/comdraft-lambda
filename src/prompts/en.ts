@@ -492,6 +492,10 @@ const fillOptionLines = (context: JobContext): string => {
 - Tone (${options.tone}): ${tone[options.tone]}`;
 };
 
+// Required heading levels the previous plan missed, sent when planning again
+const missingLevelsNote = (levels: number[]): string => `## What the previous plan missed
+The previous plan had no sections at the required heading levels ${levels.map((level) => `h${level}`).join(', ')}. Following the planning rules, plan again with subsections at those levels under the section with the most evidence. Add them by splitting one section into two subsections, and keep the section-count range.`;
+
 // Why the previous revision was discarded, sent when revising again (the system compared it with the draft)
 const retryReason: Record<RevisionProblemKind, string> = {
   empty: 'The revised draft was empty.',
@@ -512,7 +516,7 @@ export const en: PromptPack = {
   readerRuleMarker,
   plan: {
     system: PLAN_SYSTEM,
-    user: ({ context, commits, links }) => `## Request
+    user: ({ context, commits, links, missingLevels }) => `## Request
 ${tagRequest(context.prompt)}
 
 ${optionLines(context)}
@@ -522,7 +526,7 @@ ${orNone(renderCatalog(commits))}
 
 ## Reference links
 ${orNone(renderLinks(links, { preview: true }))}
-
+${missingLevels?.length ? `\n${missingLevelsNote(missingLevels)}\n` : ''}
 Plan the outline of the post from the inputs above.`,
   },
   analyze: {

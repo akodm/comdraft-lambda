@@ -76,6 +76,17 @@ const validateLinkRoles = (raw: RawPlan['linkRoles'], linkIds: Set<string>): Lin
 };
 
 // 없는 hunk·link 번호를 빼고, 절 수를 길이 범위로 자르고, level 건너뜀을 고친다. 링크 역할도 보정한다.
+// 필수 블록의 제목 수준(h2~h6) 중 기획 절에 없는 수준 (작은 것부터). h1 은 글 제목이라 보지 않는다.
+export const missingHeadingLevels = (plan: Plan, requiredBlocks: string[]): number[] => {
+  const present = new Set(plan.sections.map((section) => section.level));
+  return requiredBlocks
+    .map((block) => /^h([2-6])$/.exec(block)?.[1])
+    .filter((digit): digit is string => digit !== undefined)
+    .map(Number)
+    .filter((level) => !present.has(level))
+    .sort((a, b) => a - b);
+};
+
 export const validatePlan = (
   plan: RawPlan,
   ctx: { hunkIds: Set<string>; linkIds: Set<string>; length: string },

@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 
 import type { PreparedHunk } from './prepare.ts';
 import { AnalysisSchema, BLANK_LIMIT, type Analysis, type BlankKind, type Plan } from './schemas.ts';
-import { sanitizeHint, validateAnalysis, validatePlan } from './validate.ts';
+import { missingHeadingLevels, sanitizeHint, validateAnalysis, validatePlan } from './validate.ts';
 
 const section = (level: number, extra: Partial<Plan['sections'][number]> = {}) => ({
   level,
@@ -47,6 +47,25 @@ const ctxFor = (p: Plan, hunks: PreparedHunk[] = []) => ({
 });
 
 const empty: Analysis = { facts: [], code: [], unknowns: [] };
+
+describe('missingHeadingLevels', () => {
+  const planWith = (levels: number[]): Plan => ({
+    title: 't',
+    takeaway: 't',
+    sections: levels.map((level, i) => ({ level, heading: `h${i}`, purpose: 'p', hunks: [], links: [] })),
+    excludedCommits: [],
+    linkRoles: [],
+  });
+
+  it('필수 블록의 제목 수준(h2~h6) 중 기획에 없는 수준을 작은 것부터 돌려준다', () => {
+    // 실제 비교 실행: h2·h3·list·code 를 골랐는데 기획이 모든 절을 h2 로 잡았다
+    assert.deepEqual(missingHeadingLevels(planWith([2, 2, 2]), ['h2', 'h3', 'list', 'code']), [3]);
+    assert.deepEqual(missingHeadingLevels(planWith([2, 3, 2]), ['h2', 'h3', 'list', 'code']), []);
+    assert.deepEqual(missingHeadingLevels(planWith([2, 3]), ['h5', 'h3', 'h4']), [4, 5]);
+    // 글 제목(h1)과 제목이 아닌 블록은 보지 않는다
+    assert.deepEqual(missingHeadingLevels(planWith([2]), ['h1', 'list', 'blockquote']), []);
+  });
+});
 
 describe('validatePlan', () => {
   const ctxLinks = (ids: string[]) => ({

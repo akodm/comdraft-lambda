@@ -826,6 +826,17 @@ describe('getPromptPack', () => {
     assert.ok(text.includes(link.text));
   });
 
+  it('기획을 다시 받을 때는 빠진 필수 제목 수준을 알려 주고, 처음에는 알리지 않는다', () => {
+    const HEADING = { ko: '## 앞선 기획에서 빠진 것', en: '## What the previous plan missed' } as const;
+    for (const pack of packs) {
+      const input = { context: context({ requiredBlocks: ['h2', 'h3'] }), commits, links: [] };
+      assert.ok(!pack.plan.user(input).includes(HEADING[pack.locale]), pack.locale);
+      const retry = pack.plan.user({ ...input, missingLevels: [3, 4] });
+      assert.ok(retry.includes(HEADING[pack.locale]), pack.locale);
+      assert.ok(retry.includes('h3') && retry.includes('h4'), pack.locale);
+    }
+  });
+
   it('뒤 커밋이 같은 파일을 다시 바꿨으면 앞 hunk 에 가장 마지막으로 바꾼 커밋 번호를 붙인다', () => {
     const later = hunk('C2.F1.H1', [' const a = 1;', '+observer.disconnect();']);
     const last = hunk('C3.F1.H1', [' const a = 1;', '+cleanup();']);

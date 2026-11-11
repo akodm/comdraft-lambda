@@ -104,12 +104,17 @@ const fakeLlm = (
   plan: Plan,
   analysis: Analysis,
   markdown: string,
-  // retried: 고쳐 쓴 초안이 거절됐을 때 다시 고쳐 쓴 결과 (없으면 revised 와 같음)
-  extra: { review?: Reply<unknown>; revised?: Reply<string>; retried?: Reply<string> } = {},
+  // replan: 필수 제목 수준이 빠져 다시 기획한 결과 / retried: 고쳐 쓴 초안이 거절됐을 때 다시 고쳐 쓴 결과 (없으면 revised 와 같음)
+  extra: { replan?: Reply<unknown>; review?: Reply<unknown>; revised?: Reply<string>; retried?: Reply<string> } = {},
 ) => {
   const parses: ParseCall[] = [];
   const writes: ParseCall[] = [];
-  const parseReplies: Reply<unknown>[] = [plan, analysis, extra.review ?? NO_ISSUES];
+  const parseReplies: Reply<unknown>[] = [
+    plan,
+    ...(extra.replan === undefined ? [] : [extra.replan]),
+    analysis,
+    extra.review ?? NO_ISSUES,
+  ];
   const writeReplies: Reply<string>[] = [
     markdown,
     extra.revised ?? markdown,
@@ -260,6 +265,44 @@ describe('createClaudePipeline', () => {
     const short = fakeLlm(PLAN, analysis, MARKDOWN);
     const { analyzed: shortAnalyzed } = await run(short.llm, { context: { length: 'short' } });
     assert.deepEqual(shortAnalyzed.analysis.unknowns.map((u) => u.id), ['U1']);
+  });
+
+  describe('필수 제목 수준', () => {
+    const H3_CONTEXT = { requiredBlocks: ['h2', 'h3'] };
+    const WITH_H3: Plan = {
+      ...PLAN,
+      sections: [PLAN.sections[0], { level: 3, heading: '세부', purpose: '나눔', hunks: [], links: [] }],
+    };
+
+    it('필수 h3 이 기획에 없으면 빠진 수준을 알려 주고 한 번만 다시 기획한다', async () => {
+      // 실제 비교 실행: h2·h3·list·code 를 골랐는데 모든 절이 h2 였다
+      const { llm, parses } = fakeLlm(PLAN, ANALYSIS, MARKDOWN, { replan: WITH_H3 });
+      const { classified } = await run(llm, { context: H3_CONTEXT });
+
+      assert.equal(parses.length, 4);
+      assert.ok(!parses[0].user.includes('앞선 기획에서 빠진 것'));
+      assert.ok(parses[1].user.includes('앞선 기획에서 빠진 것'));
+      assert.ok(parses[1].user.includes('h3'));
+      assert.deepEqual(classified.plan.sections.map((section) => section.level), [2, 3]);
+    });
+
+    it('다시 기획해도 빠졌으면 처음 기획을 쓰고 더 시도하지 않는다', async () => {
+      const { llm, parses } = fakeLlm(PLAN, ANALYSIS, MARKDOWN, { replan: { ...PLAN, title: '다른 기획' } });
+      const { classified } = await run(llm, { context: H3_CONTEXT });
+
+      assert.equal(parses.length, 4);
+      assert.equal(classified.plan.title, PLAN.title);
+    });
+
+    it('필수 제목 수준이 없거나 이미 있으면 다시 기획하지 않는다', async () => {
+      const none = fakeLlm(PLAN, ANALYSIS, MARKDOWN);
+      await run(none.llm);
+      assert.equal(none.parses.length, 3);
+
+      const present = fakeLlm(WITH_H3, ANALYSIS, MARKDOWN);
+      await run(present.llm, { context: H3_CONTEXT });
+      assert.equal(present.parses.length, 3);
+    });
   });
 
   it('로케일 en 이면 en 프롬프트를 쓴다', async () => {

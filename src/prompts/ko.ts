@@ -490,6 +490,10 @@ const fillOptionLines = (context: JobContext): string => {
 - 문체 (${options.tone}): ${tone[options.tone]}`;
 };
 
+// 다시 기획할 때 알려 주는 빠진 필수 제목 수준
+const missingLevelsNote = (levels: number[]): string => `## 앞선 기획에서 빠진 것
+앞선 기획에는 필수 블록의 제목 수준 ${levels.map((level) => `h${level}`).join(', ')} 이 sections 에 없었다. 기획 규칙대로 그 수준의 하위 절을 근거가 가장 많은 절 아래에 넣어 다시 기획한다. 한 절을 하위 절 둘로 나누는 식으로 넣고, 절 수 범위는 지킨다.`;
+
 // 다시 고쳐 쓸 때 알려 주는 앞선 고쳐 쓰기의 문제 (시스템이 초안과 맞춰 보고 버린 이유)
 const retryReason: Record<RevisionProblemKind, string> = {
   empty: '고친 초안이 비어 있었다.',
@@ -510,7 +514,7 @@ export const ko: PromptPack = {
   readerRuleMarker,
   plan: {
     system: PLAN_SYSTEM,
-    user: ({ context, commits, links }) => `## 요청
+    user: ({ context, commits, links, missingLevels }) => `## 요청
 ${tagRequest(context.prompt)}
 
 ${optionLines(context)}
@@ -520,7 +524,7 @@ ${orNone(renderCatalog(commits))}
 
 ## 참고 링크
 ${orNone(renderLinks(links, { preview: true }))}
-
+${missingLevels?.length ? `\n${missingLevelsNote(missingLevels)}\n` : ''}
 위 입력으로 글의 목차를 기획해 주세요.`,
   },
   analyze: {

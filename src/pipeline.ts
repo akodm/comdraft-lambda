@@ -30,7 +30,7 @@ import {
   type Plan,
 } from './generation/schemas.ts';
 import { toStoredAnalysis, type StoredAnalysis } from './generation/stored-analysis.ts';
-import { validateAnalysis, validatePlan } from './generation/validate.ts';
+import { missingHeadingLevels, validateAnalysis, validatePlan } from './generation/validate.ts';
 import { getPromptPack } from './prompts/index.ts';
 import { renderCatalog, resolveOptions } from './prompts/render.ts';
 
@@ -160,23 +160,39 @@ export const createClaudePipeline = ({
     const pack = getPromptPack(context.locale);
     const { commits, hunks, links } = prepared;
 
-    const raw = await llm.parse({
-      system: pack.plan.system,
-      user: pack.plan.user({ context, commits, links }),
-      schema: PlanSchema,
-      onUsage,
-      ...PLAN_STAGE,
-    });
-
-    const plan = validatePlan(raw, {
+    const planContext = {
       hunkIds: new Set(
         [...hunks.values()].filter((h) => !h.redacted).map((h) => h.id),
       ),
       linkIds: new Set(links.map((link) => link.id)),
       length: context.length,
-    });
+    };
+    const requiredBlocks = resolveOptions(context).requiredBlocks;
+    const requestPlan = async (missingLevels?: number[]) =>
+      validatePlan(
+        await llm.parse({
+          system: pack.plan.system,
+          user: pack.plan.user({ context, commits, links, missingLevels }),
+          schema: PlanSchema,
+          onUsage,
+          ...PLAN_STAGE,
+        }),
+        planContext,
+      );
 
-    return { ...prepared, plan };
+    const plan = await requestPlan();
+    const missing = missingHeadingLevels(plan, requiredBlocks);
+
+    if (missing.length === 0) {
+      return { ...prepared, plan };
+    }
+
+    // 필수 제목 수준이 빠졌으면 빠진 수준을 알려 주고 한 번만 다시 기획한다 (덜 빠진 쪽을 쓴다)
+    const replanned = await requestPlan(missing);
+    const better =
+      missingHeadingLevels(replanned, requiredBlocks).length < missing.length ? replanned : plan;
+
+    return { ...prepared, plan: better };
   },
 
   analyze: async ({ context, onUsage, onAnalysis }, classified) => {
