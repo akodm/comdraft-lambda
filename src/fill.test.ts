@@ -30,6 +30,7 @@ const CONTEXT: JobContext = {
   owner: 'o',
   repo: 'r',
   clarification: null,
+  clarificationAsked: false,
   blank: BLANK,
 };
 
