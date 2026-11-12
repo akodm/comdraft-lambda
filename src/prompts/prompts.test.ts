@@ -99,6 +99,7 @@ const plan: Plan = {
   ],
   excludedCommits: [],
   linkRoles: [{ id: 'L1', role: 'docs', relation: '설정 절차를 따른다' }],
+  clarify: null,
 };
 
 const analysis: Analysis = {

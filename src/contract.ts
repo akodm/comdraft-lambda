@@ -4,7 +4,8 @@
  */
 
 // 작업 상태 (draft_prompt.status)
-export type GenerationStatus = 'queued' | 'running' | 'completed' | 'failed';
+// awaiting_input: 기획이 되물어 작성자의 답을 기다리는 중 (Lambda 는 멈춰 있음)
+export type GenerationStatus = 'queued' | 'running' | 'awaiting_input' | 'completed' | 'failed';
 
 // 완료한 단계 (0: 시작 전, 1: 구분, 2: 분석, 3: 작성)
 // 빈칸 채우기 작업은 중간 단계 없이 0 에서 완료(3)로 바로 넘어감
@@ -43,7 +44,30 @@ export type GenerationErrorCode =
   | 'invalid_result'
   | 'runner_unavailable'
   | 'quota_exceeded'
+  // 작성자가 질문 카드에서 취소
+  | 'cancelled'
   | 'internal';
+
+// 작성 전 되묻기: 기획이 던진 질문 하나 (보기가 없으면 직접 입력만)
+export interface GenerationClarificationQuestion {
+  id: string;
+  question: string;
+  options: string[];
+}
+
+// 작성자의 답 하나 (질문 id 로 연결)
+export interface GenerationClarificationAnswer {
+  id: string;
+  answer: string;
+}
+
+// draft_prompt.clarification (null 이면 아직 묻지 않은 작업)
+export interface GenerationClarification {
+  reason: string;
+  questions: GenerationClarificationQuestion[];
+  // null: 답변 대기, 배열: 답함 (답한 질문만), 'skipped': 그냥 작성
+  answers: GenerationClarificationAnswer[] | 'skipped' | null;
+}
 
 // 요청 본문 검증 (API Gateway 모델 검증을 거치지만 Lambda 에서도 한 번 더 확인)
 export const parseGenerationRequest = (

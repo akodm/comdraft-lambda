@@ -1,3 +1,4 @@
+import { validateClarify } from './clarify.ts';
 import { CODE_LIMIT, MAX_CODE_LINES } from './limits.ts';
 import type { PreparedHunk } from './prepare.ts';
 import {
@@ -108,7 +109,12 @@ export const validatePlan = (
       links: section.links.filter((id) => ctx.linkIds.has(id)),
     };
   });
-  return { ...plan, sections, linkRoles: validateLinkRoles(plan.linkRoles, ctx.linkIds) };
+  return {
+    ...plan,
+    sections,
+    linkRoles: validateLinkRoles(plan.linkRoles, ctx.linkIds),
+    clarify: validateClarify(plan.clarify),
+  };
 };
 
 const isKnownEvidence = (

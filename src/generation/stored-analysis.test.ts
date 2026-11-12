@@ -13,6 +13,7 @@ const plan: Plan = {
   ],
   excludedCommits: [{ id: 'C2', reason: '오타' }],
   linkRoles: [],
+  clarify: null,
 };
 
 const analysis: Analysis = {

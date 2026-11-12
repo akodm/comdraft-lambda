@@ -59,6 +59,13 @@ describe('isWithinAllowance', () => {
 });
 
 describe('getJobUsage', () => {
+  it('답변 대기 작업은 쓴 토큰만 센다', () => {
+    assert.equal(
+      getJobUsage({ status: 'awaiting_input', estimatedTokens: 50_000, usedTokens: 4_000, errorCode: null }),
+      4_000,
+    );
+  });
+
   it('작업별 사용량 규칙', () => {
     const usage = (
       status: 'queued' | 'running' | 'completed' | 'failed',
