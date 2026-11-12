@@ -2,11 +2,14 @@ import type {
   GenerationClarification,
   GenerationErrorCode,
   GenerationJobKind,
+  GenerationModel,
   GenerationStatus,
   GenerationStep,
 } from './contract.ts';
 import type { Database } from './db.ts';
 import { parseJobClarification } from './generation/clarify.ts';
+import type { UsageReport } from './generation/llm.ts';
+import { toModel } from './generation/models.ts';
 import type { ClarifyRequest } from './generation/schemas.ts';
 import {
   parseStoredAnalysis,
@@ -57,6 +60,8 @@ export interface JobContext {
   repo: string;
   // kind 가 'fill' 이고 빈칸 값이 모두 있을 때만
   blank?: JobBlank;
+  // 작업이 쓸 모델 (DB 의 모르는 값은 haiku)
+  model: GenerationModel;
   // 작성 전 되묻기 (null 이면 아직 묻지 않은 작업)
   clarification: GenerationClarification | null;
   // 되묻기 질문을 이미 저장했는지 (저장 값이 깨져 clarification 이 null 이어도 true, 다시 묻지 않는 기준)
@@ -73,10 +78,10 @@ export interface JobStore {
   complete: (jobId: string, result: string) => Promise<boolean>;
   // 실패 처리 (진행 중인 작업만, 사유 코드만 남김)
   fail: (jobId: string, errorCode: GenerationErrorCode) => Promise<boolean>;
-  // 예상 사용량을 기록하고 작업이 만들어진 주의 남은 양으로 시작할 수 있는지 판정 (사용자별 advisory lock 트랜잭션)
-  reserveQuota: (jobId: string, estimate: number) => Promise<QuotaReservation>;
-  // 사용한 토큰을 누적 (0 이하는 무시)
-  addUsage: (jobId: string, tokens: number) => Promise<void>;
+  // 예상 비용(마이크로달러)을 기록하고 작업이 만들어진 주의 남은 양으로 시작할 수 있는지 판정 (사용자별 advisory lock 트랜잭션)
+  reserveQuota: (jobId: string, estimateCost: number) => Promise<QuotaReservation>;
+  // 사용한 토큰과 비용을 함께 누적 (둘 다 0 이하면 무시)
+  addUsage: (jobId: string, usage: UsageReport) => Promise<void>;
   // 초안 작성 작업의 분석 결과 저장 (running 인 작업만)
   saveAnalysis: (jobId: string, analysis: StoredAnalysis) => Promise<void>;
   // 이 작업과 같은 초안의 가장 최근 완료된 초안 작성 작업이 저장한 분석 (없거나 저장하지 않았으면 null)
@@ -92,7 +97,7 @@ export type QuotaReservation = 'reserved' | 'exceeded' | 'no_plan';
 // 작업 → 사용자 → 정책 조회 결과 (postgres 는 numeric 을 문자열로 돌려줌)
 interface PlanRow {
   role: string;
-  weeklyTokenLimit: number;
+  weeklyCostLimit: number | string;
   overrunRatio: string;
   resetTimezone: string;
   resetWeekday: number;
@@ -101,8 +106,9 @@ interface PlanRow {
 
 interface UsageRow {
   status: GenerationStatus;
-  estimatedTokens: number | null;
-  usedTokens: number;
+  // bigint 는 postgres 가 문자열로 돌려줄 수 있음
+  estimatedCost: number | string | null;
+  usedCost: number | string;
   errorCode: string | null;
 }
 
@@ -124,8 +130,9 @@ const toUrlList = (value: unknown): string[] => {
 };
 
 // loadContext 조회 행 (빈칸 값은 빈칸 채우기 작업에만 있음)
-interface ContextRow extends Omit<JobContext, 'kind' | 'blank' | 'clarification'> {
+interface ContextRow extends Omit<JobContext, 'kind' | 'blank' | 'clarification' | 'model'> {
   kind: string;
+  model: string | null;
   clarification: unknown;
   blankId: string | null;
   blankQuestion: string | null;
@@ -151,6 +158,7 @@ const toContext = (row: ContextRow): JobContext => {
   return {
     ...rest,
     kind,
+    model: toModel(row.model),
     referenceUrls: toUrlList(row.referenceUrls),
     ...(kind === 'fill' ? { blank: toBlank(row) } : {}),
     clarification: kind === 'draft' ? parseJobClarification(clarification) : null,
@@ -172,7 +180,7 @@ export const createJobStore = (sql: Database): JobStore => ({
 
   loadContext: async (jobId) => {
     const [row] = await sql<ContextRow[]>`
-      select p.kind, p.prompt, p.tone, p.post_type as "postType", p.length,
+      select p.kind, p.model, p.prompt, p.tone, p.post_type as "postType", p.length,
         p.required_blocks as "requiredBlocks", p.locale, p.commit_shas as "commitShas",
         p.reference_urls as "referenceUrls",
         p.blank_id as "blankId", p.blank_question as "blankQuestion",
@@ -222,7 +230,7 @@ export const createJobStore = (sql: Database): JobStore => ({
     return rows.length > 0;
   },
 
-  reserveQuota: async (jobId, estimate) =>
+  reserveQuota: async (jobId, estimateCost) =>
     sql.begin(async (tx) => {
       // 작업의 사용자와 생성 시각 (사용량은 작업 행의 user_id 로 셈, 초안을 삭제해도 작업 행은 남음)
       // → user_id 가 없는 행은 마이그레이션 0015 적용 후 배포 전까지 이전 Next.js 코드가 만든 작업뿐이라 초안의 사용자로 대신함
@@ -243,7 +251,7 @@ export const createJobStore = (sql: Database): JobStore => ({
 
       const [row] = await tx<PlanRow[]>`
         select q.role,
-          q.weekly_token_limit as "weeklyTokenLimit",
+          q.weekly_cost_limit as "weeklyCostLimit",
           q.overrun_ratio as "overrunRatio",
           q.reset_timezone as "resetTimezone",
           q.reset_weekday as "resetWeekday",
@@ -259,7 +267,7 @@ export const createJobStore = (sql: Database): JobStore => ({
 
       const plan: QuotaPlan = {
         role: row.role,
-        weeklyTokenLimit: Number(row.weeklyTokenLimit),
+        weeklyCostLimit: Number(row.weeklyCostLimit),
         overrunRatio: Number(row.overrunRatio),
         resetTimezone: row.resetTimezone,
         resetWeekday: Number(row.resetWeekday),
@@ -270,38 +278,48 @@ export const createJobStore = (sql: Database): JobStore => ({
 
       // 그 주에 이 사용자가 만든 다른 작업 사용량 (이 작업은 제외)
       const others = await tx<UsageRow[]>`
-        select p.status, p.estimated_tokens as "estimatedTokens",
-          p.used_tokens as "usedTokens", p.error_code as "errorCode"
+        select p.status, p.estimated_cost as "estimatedCost",
+          p.used_cost as "usedCost", p.error_code as "errorCode"
         from comdraft.draft_prompt p
         where p.user_id = ${owner.userId}
           and p.created_at >= ${week.start}
           and p.created_at < ${week.resetsAt}
           and p.id <> ${jobId}
       `;
-      const used = others.reduce((sum, job) => sum + getJobUsage(job), 0);
-      const remaining = plan.weeklyTokenLimit - used;
+      const used = others.reduce(
+        (sum, job) =>
+          sum +
+          getJobUsage({
+            ...job,
+            estimatedCost: job.estimatedCost === null ? null : Number(job.estimatedCost),
+            usedCost: Number(job.usedCost),
+          }),
+        0,
+      );
+      const remaining = plan.weeklyCostLimit - used;
 
       // 허용 여부와 상관없이 예상량은 남김 (거부된 작업은 getJobUsage 가 0 으로 셈)
       await tx`
         update comdraft.draft_prompt
-        set estimated_tokens = ${estimate}
+        set estimated_cost = ${estimateCost}
         where id = ${jobId}
       `;
 
-      return isWithinAllowance(estimate, remaining, plan)
+      return isWithinAllowance(estimateCost, remaining, plan)
         ? 'reserved'
         : 'exceeded';
     }),
 
-  addUsage: async (jobId, tokens) => {
-    if (tokens <= 0) {
+  addUsage: async (jobId, { tokens, cost }) => {
+    if (tokens <= 0 && cost <= 0) {
       return;
     }
 
-    // 단일 UPDATE 라 트랜잭션 없이 원자적으로 누적
+    // 단일 UPDATE 라 트랜잭션 없이 원자적으로 누적 (토큰과 비용은 항상 함께 쌓는다)
     await sql`
       update comdraft.draft_prompt
-      set used_tokens = used_tokens + ${tokens}
+      set used_tokens = used_tokens + ${tokens},
+        used_cost = used_cost + ${cost}
       where id = ${jobId}
     `;
   },
@@ -342,7 +360,8 @@ export const createJobStore = (sql: Database): JobStore => ({
       update comdraft.draft_prompt
       set status = 'awaiting_input',
         clarification = ${sql.json(stored)},
-        estimated_tokens = null
+        estimated_tokens = null,
+        estimated_cost = null
       where id = ${jobId} and status = 'running' and clarification is null
       returning id
     `;

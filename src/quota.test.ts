@@ -9,7 +9,7 @@ import {
 
 const seoul: QuotaPlan = {
   role: 'basic',
-  weeklyTokenLimit: 100_000,
+  weeklyCostLimit: 100_000,
   overrunRatio: 1.3,
   resetTimezone: 'Asia/Seoul',
   resetWeekday: 0,
@@ -59,21 +59,22 @@ describe('isWithinAllowance', () => {
 });
 
 describe('getJobUsage', () => {
-  it('답변 대기 작업은 쓴 토큰만 센다', () => {
+  it('답변 대기 작업은 쓴 비용만 센다', () => {
     assert.equal(
-      getJobUsage({ status: 'awaiting_input', estimatedTokens: 50_000, usedTokens: 4_000, errorCode: null }),
+      getJobUsage({ status: 'awaiting_input', estimatedCost: 50_000, usedCost: 4_000, errorCode: null }),
       4_000,
     );
   });
 
-  it('작업별 사용량 규칙', () => {
+  it('작업별 비용 사용량 규칙', () => {
     const usage = (
       status: 'queued' | 'running' | 'completed' | 'failed',
-      estimatedTokens: number | null,
-      usedTokens: number,
+      estimatedCost: number | null,
+      usedCost: number,
       errorCode: string | null,
-    ) => getJobUsage({ status, estimatedTokens, usedTokens, errorCode });
+    ) => getJobUsage({ status, estimatedCost, usedCost, errorCode });
 
+    // 진행 중은 예상과 실제 중 큰 쪽
     assert.equal(usage('running', 50_000, 12_000, null), 50_000);
     assert.equal(usage('running', 50_000, 61_000, null), 61_000);
     assert.equal(usage('queued', null, 0, null), 0);

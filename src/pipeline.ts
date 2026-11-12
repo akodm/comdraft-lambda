@@ -3,11 +3,11 @@ import type { JobContext } from './jobs.ts';
 import { GenerationFailure } from './errors.ts';
 import { alignDraftToPlan } from './generation/align.ts';
 import { assemble, unwrapOuterFence } from './generation/assemble.ts';
-import { estimateJobTokens } from './generation/estimate.ts';
+import { estimateJobCost, estimateStages } from './generation/estimate.ts';
 import {
   estimateTokens,
-  REVIEW_MIN_REMAINING_MS,
-  REVISE_MIN_REMAINING_MS,
+  reviewMinRemainingMs,
+  reviseMinRemainingMs,
 } from './generation/limits.ts';
 import { fetchReferenceLinks, type PreparedLink } from './generation/links.ts';
 import type { LlmClient, OnUsage } from './generation/llm.ts';
@@ -59,7 +59,7 @@ export interface PipelineInput {
 export interface Pipeline<P = unknown, C = unknown, A = unknown, W = unknown> {
   // 준비: Claude 를 부르기 전에 커밋·참고 링크를 정리
   prepare: (input: PipelineInput) => Promise<P>;
-  // 준비물로 작업 전체의 토큰 예상량 계산 (할당량 검사용)
+  // 준비물로 작업 전체의 비용 예상량 계산 (마이크로달러, 할당량 검사용)
   estimate: (input: PipelineInput, prepared: P) => number;
   // 1단계: 커밋을 주제/작업 단위로 구분
   classify: (input: PipelineInput, prepared: P) => Promise<C>;
@@ -104,16 +104,16 @@ export interface ClaudePipelineDependencies {
   reportError?: (error: unknown) => void;
 }
 
-// 단계별 호출(모델·사고 깊이)과 출력 상한 (지금은 모두 Haiku, 고른 모델로 바꾸는 것은 다음 작업)
+// 단계별 출력 상한 (호출의 모델·사고 깊이는 작업 모델로 stagePlan 이 정한다)
 // - 생각과 출력이 상한 안에 들어오도록 넉넉하게 잡는다 (분석은 low·16,000 에서 생각만으로 상한을 다 쓴 적이 있다)
-const PLAN_STAGE = { call: stagePlan('haiku', 'plan'), maxTokens: 16_000 };
-const ANALYZE_STAGE = { call: stagePlan('haiku', 'analyze'), maxTokens: 32_000 };
-const REVIEW_STAGE = { call: stagePlan('haiku', 'review'), maxTokens: 16_000 };
+const PLAN_MAX_TOKENS = 16_000;
+const ANALYZE_MAX_TOKENS = 32_000;
+const REVIEW_MAX_TOKENS = 16_000;
 // 고쳐 쓰기 최대 횟수 (처음 한 번 + 검사에서 거절되면 이유를 알려 주고 한 번 더)
 const REVISE_ATTEMPTS = 2;
-// 글을 쓰는 작성·고쳐 쓰기는 한 단계 더 깊게(high) 생각한다
-const WRITE_STAGE = { call: stagePlan('haiku', 'write'), maxTokens: 32_000 };
-const REVISE_STAGE = { call: stagePlan('haiku', 'revise'), maxTokens: 32_000 };
+// 글을 쓰는 작성·고쳐 쓰기는 출력이 길다
+const WRITE_MAX_TOKENS = 32_000;
+const REVISE_MAX_TOKENS = 32_000;
 
 // 링크는 글의 보조 근거라 가져오기에 실패해도 작업을 멈추지 않는다
 const safeFetchLinks = async (
@@ -132,7 +132,7 @@ const estimatePrepared = (context: JobContext, { commits, hunks, links }: Prepar
   const pack = getPromptPack(context.locale);
   const sum = (texts: string[]) => texts.reduce((total, text) => total + estimateTokens(text), 0);
 
-  return estimateJobTokens(
+  const stages = estimateStages(
     {
       catalogTokens: estimateTokens(renderCatalog(commits)),
       hunkTokens: sum(
@@ -149,6 +149,8 @@ const estimatePrepared = (context: JobContext, { commits, hunks, links }: Prepar
       write: estimateTokens(pack.write.system),
     },
   );
+
+  return estimateJobCost(stages, context.model);
 };
 
 export const createClaudePipeline = ({
@@ -185,7 +187,8 @@ export const createClaudePipeline = ({
           user: pack.plan.user({ context, commits, links, missingLevels }),
           schema: PlanSchema,
           onUsage,
-          ...PLAN_STAGE,
+          call: stagePlan(context.model, 'plan'),
+          maxTokens: PLAN_MAX_TOKENS,
         }),
         planContext,
       );
@@ -231,7 +234,8 @@ export const createClaudePipeline = ({
       user: pack.analyze.user({ context, plan, commits, hunks: selected, links }),
       schema: AnalysisSchema,
       onUsage,
-      ...ANALYZE_STAGE,
+      call: stagePlan(context.model, 'analyze'),
+      maxTokens: ANALYZE_MAX_TOKENS,
     });
 
     const analysis = validateAnalysis(raw, {
@@ -264,7 +268,8 @@ export const createClaudePipeline = ({
       system: pack.write.system,
       user: pack.write.user({ context, plan, analysis, hunks: selected, links }),
       onUsage,
-      ...WRITE_STAGE,
+      call: stagePlan(context.model, 'write'),
+      maxTokens: WRITE_MAX_TOKENS,
     });
     // 계획에 없이 덧붙인 절을 덜어 내고 제목 수준을 계획대로 맞춘다 (검토·고쳐 쓰기도 이 초안을 기준으로 한다)
     const draft = alignDraftToPlan(unwrapOuterFence(written), plan.sections);
@@ -292,13 +297,14 @@ export const createClaudePipeline = ({
     // 검토는 덤이라 LLM 단계(GenerationFailure)가 실패해도 원래 초안으로 조립한다
     // 그 밖의 오류(사용량 기록 실패 등)는 작업 실패로 이어지도록 그대로 던진다
     try {
-      if (remainingTimeMs() >= REVIEW_MIN_REMAINING_MS) {
+      if (remainingTimeMs() >= reviewMinRemainingMs(context.model)) {
         const raw = await llm.parse({
           system: pack.review.system,
           user: pack.review.user(base),
           schema: ReviewSchema,
           onUsage,
-          ...REVIEW_STAGE,
+          call: stagePlan(context.model, 'review'),
+          maxTokens: REVIEW_MAX_TOKENS,
         });
         // 패턴으로 찾은 메타 문장·전언·추측은 모델 검토가 놓쳐도 고쳐 쓰기가 다루게 앞에 넣는다
         const issues = mergeIssues(findPatternIssues(draft, pack.reviewPatterns), validateReview(raw, draft));
@@ -309,14 +315,15 @@ export const createClaudePipeline = ({
 
         for (
           let attempt = 0;
-          issues.length > 0 && attempt < REVISE_ATTEMPTS && remainingTimeMs() >= REVISE_MIN_REMAINING_MS;
+          issues.length > 0 && attempt < REVISE_ATTEMPTS && remainingTimeMs() >= reviseMinRemainingMs(context.model);
           attempt += 1
         ) {
           const revised = await llm.write({
             system: pack.revise.system,
             user: pack.revise.user({ ...base, issues, retry }),
             onUsage,
-            ...REVISE_STAGE,
+            call: stagePlan(context.model, 'revise'),
+            maxTokens: REVISE_MAX_TOKENS,
           });
           const check = checkRevision(draft, revised, linkIds);
 

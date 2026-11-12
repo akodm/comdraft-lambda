@@ -5,8 +5,8 @@ import type { CommitDetail } from './github.ts';
 import type { GenerationClarification } from './contract.ts';
 import type { JobContext } from './jobs.ts';
 import type { PreparedLink } from './generation/links.ts';
-import { estimateJobTokens } from './generation/estimate.ts';
-import { estimateTokens, REVIEW_MIN_REMAINING_MS, REVISE_MIN_REMAINING_MS } from './generation/limits.ts';
+import { estimateJobCost, estimateStages } from './generation/estimate.ts';
+import { estimateTokens, reviewMinRemainingMs, reviseMinRemainingMs } from './generation/limits.ts';
 import { GenerationFailure } from './errors.ts';
 import type { LlmClient, OnUsage } from './generation/llm.ts';
 import { stagePlan, type StageCall } from './generation/models.ts';
@@ -27,6 +27,7 @@ const CONTEXT: JobContext = {
   length: 'medium',
   requiredBlocks: [],
   locale: 'ko',
+  model: 'haiku',
   referenceUrls: ['https://example.com/post'],
   commitShas: ['bbbb2222', 'aaaa1111'],
   owner: 'o',
@@ -212,7 +213,76 @@ const prepareOnly = async (
   return { prepared, estimate: pipeline.estimate(input, prepared), calls: parses.length + writes.length };
 };
 
+// 준비물 토큰으로 haiku 작업의 비용 예상량을 직접 계산한다
+const haikuEstimate = (tokens: { catalogTokens: number; hunkTokens: number; linkTokens: number }) => {
+  const pack = getPromptPack('ko');
+
+  return estimateJobCost(
+    estimateStages({ ...tokens, requestTokens: estimateTokens(CONTEXT.prompt) }, 'medium', {
+      plan: estimateTokens(pack.plan.system),
+      analyze: estimateTokens(pack.analyze.system),
+      write: estimateTokens(pack.write.system),
+    }),
+    'haiku',
+  );
+};
+
 describe('createClaudePipeline', () => {
+  it('haiku 작업은 지금과 같은 사고 깊이', async () => {
+    const { llm, parses, writes } = fakeLlm(PLAN, ANALYSIS, MARKDOWN, { review: { issues: [{ kind: 'unsupported', quote: '지연 로딩을 넣었다', fix: '줄인다' }] } });
+    await run(llm);
+
+    assert.deepEqual(
+      [...parses, ...writes].map(({ call }) => [call.model, call.effort, call.fallback]),
+      [
+        ['haiku', 'medium', null],
+        ['haiku', 'medium', null],
+        ['haiku', 'medium', null],
+        ['haiku', 'high', null],
+        ['haiku', 'high', null],
+      ],
+    );
+  });
+
+  it('sonnet 작업은 기획·작성·검토·고쳐 쓰기를 sonnet 으로, 분석을 haiku 로 부른다', async () => {
+    const { llm, parses, writes } = fakeLlm(PLAN, ANALYSIS, MARKDOWN, {
+      review: { issues: [{ kind: 'unsupported', quote: '지연 로딩을 넣었다', fix: '줄인다' }] },
+    });
+    await run(llm, { context: { model: 'sonnet' } });
+
+    // parse: 기획, 분석, 검토 / write: 작성, 고쳐 쓰기
+    assert.deepEqual(
+      parses.map(({ call }) => call),
+      [stagePlan('sonnet', 'plan'), stagePlan('sonnet', 'analyze'), stagePlan('sonnet', 'review')],
+    );
+    assert.deepEqual(
+      writes.map(({ call }) => call),
+      [stagePlan('sonnet', 'write'), stagePlan('sonnet', 'revise')],
+    );
+    assert.deepEqual(
+      [...parses, ...writes].map(({ call }) => [call.model, call.effort]),
+      [
+        ['sonnet', 'low'],
+        ['haiku', 'medium'],
+        ['sonnet', 'low'],
+        ['sonnet', 'medium'],
+        ['sonnet', 'medium'],
+      ],
+    );
+    assert.deepEqual(parses[0].call.fallback, { model: 'haiku', effort: 'medium' });
+    assert.equal(parses[1].call.fallback, null);
+  });
+
+  it('opus 작업의 필수 제목 재기획도 opus low 로 부른다', async () => {
+    const { llm, parses } = fakeLlm(PLAN, ANALYSIS, MARKDOWN, { replan: PLAN });
+    await run(llm, { context: { model: 'opus', requiredBlocks: ['h3'] } });
+
+    assert.deepEqual(
+      parses.slice(0, 2).map(({ call }) => [call.model, call.effort]),
+      [['opus', 'low'], ['opus', 'low']],
+    );
+  });
+
   it('세 단계를 거쳐 코드·빈칸이 치환된 Markdown 을 만든다', async () => {
     const { llm, parses, writes } = fakeLlm(PLAN, ANALYSIS, MARKDOWN);
     const { markdown } = await run(llm);
@@ -225,7 +295,7 @@ describe('createClaudePipeline', () => {
     assert.ok(!markdown.includes('{{'));
     assert.deepEqual(
       parses.map(({ call, maxTokens }) => [call, maxTokens]),
-      // 지금은 모두 Haiku (기획·분석·검토 medium), 사고 깊이와 출력 상한은 이전과 같다
+      // haiku 작업은 지금과 같은 사고 깊이 (기획·분석·검토 medium, 작성 high), 출력 상한도 같다
       [
         [stagePlan('haiku', 'plan'), 16_000],
         [stagePlan('haiku', 'analyze'), 32_000],
@@ -490,6 +560,28 @@ describe('createClaudePipeline', () => {
     assert.ok(markdown.includes(':::blank'));
   });
 
+  it('예상 비용은 작업 모델이 높을수록 커진다', async () => {
+    const haiku = (await prepareOnly()).estimate;
+    const sonnet = (await prepareOnly({ context: { model: 'sonnet' } })).estimate;
+    const opus = (await prepareOnly({ context: { model: 'opus' } })).estimate;
+
+    assert.ok(haiku < sonnet && sonnet < opus, `${haiku} ${sonnet} ${opus}`);
+  });
+
+  it('모델별 검토·고쳐 쓰기 기준은 그 모델의 호출 제한에 맞춘다', () => {
+    assert.deepEqual([reviewMinRemainingMs('haiku'), reviseMinRemainingMs('haiku')], [120_000, 195_000]);
+    assert.deepEqual([reviewMinRemainingMs('sonnet'), reviseMinRemainingMs('sonnet')], [160_000, 255_000]);
+    assert.deepEqual([reviewMinRemainingMs('opus'), reviseMinRemainingMs('opus')], [200_000, 315_000]);
+  });
+
+  it('sonnet 작업은 sonnet 기준 미만으로 남으면 검토를 건너뛴다', async () => {
+    const { llm, parses } = fakeLlm(PLAN, ANALYSIS, MARKDOWN);
+    // haiku 기준(120초)은 넘지만 sonnet 기준(160초)에는 못 미친다
+    await run(llm, { context: { model: 'sonnet' }, remainingTimeMs: () => 150_000 });
+
+    assert.equal(parses.length, 2);
+  });
+
   it('준비와 예상량 계산은 Claude 를 부르지 않는다', async () => {
     const { prepared, estimate, calls } = await prepareOnly();
 
@@ -502,19 +594,22 @@ describe('createClaudePipeline', () => {
     const hunkBody = PATCH.split('\n').slice(1).join('\n');
     assert.equal(
       estimate,
-      estimateJobTokens(
-        {
-          catalogTokens: estimateTokens(renderCatalog(prepared.commits)),
-          hunkTokens: estimateTokens(hunkBody) * 2,
-          linkTokens: estimateTokens(LINKS[0].text),
-          requestTokens: estimateTokens(CONTEXT.prompt),
-        },
-        'medium',
-        {
-          plan: estimateTokens(pack.plan.system),
-          analyze: estimateTokens(pack.analyze.system),
-          write: estimateTokens(pack.write.system),
-        },
+      estimateJobCost(
+        estimateStages(
+          {
+            catalogTokens: estimateTokens(renderCatalog(prepared.commits)),
+            hunkTokens: estimateTokens(hunkBody) * 2,
+            linkTokens: estimateTokens(LINKS[0].text),
+            requestTokens: estimateTokens(CONTEXT.prompt),
+          },
+          'medium',
+          {
+            plan: estimateTokens(pack.plan.system),
+            analyze: estimateTokens(pack.analyze.system),
+            write: estimateTokens(pack.write.system),
+          },
+        ),
+        'haiku',
       ),
     );
   });
@@ -544,10 +639,15 @@ describe('createClaudePipeline', () => {
     const hidden = await estimateFor(secret);
 
     assert.equal(hidden.redacted, true);
-    // 가린 hunk 는 카탈로그 차이만큼만 달라지고 본문은 0 으로 센다
+    // 가린 hunk 는 본문을 0 으로 센다 (카탈로그만 반영)
+    assert.equal(hidden.estimate, haikuEstimate({ catalogTokens: hidden.catalog, hunkTokens: 0, linkTokens: 0 }));
     assert.equal(
-      hidden.estimate - hidden.catalog,
-      plain.estimate - plain.catalog - estimateTokens(PATCH.split('\n').slice(1).join('\n')),
+      plain.estimate,
+      haikuEstimate({
+        catalogTokens: plain.catalog,
+        hunkTokens: estimateTokens(PATCH.split('\n').slice(1).join('\n')),
+        linkTokens: 0,
+      }),
     );
   });
 
@@ -557,7 +657,7 @@ describe('createClaudePipeline', () => {
     const withLinks = await prepareOnly({ links: [{ ...LINKS[0], text }] });
     const long = await prepareOnly({ links: [], context: { length: 'long' } });
 
-    assert.equal(withLinks.estimate, withoutLinks.estimate + estimateTokens(text));
+    assert.ok(withLinks.estimate > withoutLinks.estimate);
     assert.ok(long.estimate > withoutLinks.estimate);
   });
 
@@ -683,7 +783,7 @@ describe('createClaudePipeline', () => {
           ...llm,
           write: async (req) => {
             const result = await llm.write(req);
-            if (writes.length === 2) left = REVISE_MIN_REMAINING_MS - 1;
+            if (writes.length === 2) left = reviseMinRemainingMs('haiku') - 1;
             return result;
           },
         },
@@ -726,7 +826,7 @@ describe('createClaudePipeline', () => {
 
     it('남은 시간이 검토 기준 미만이면 검토를, 고쳐 쓰기 기준 미만이면 고쳐 쓰기를 부르지 않는다', async () => {
       const noReview = fakeLlm(PLAN, ANALYSIS, MARKDOWN, { review: { issues: [ISSUE] } });
-      const first = await run(noReview.llm, { remainingTimeMs: () => REVIEW_MIN_REMAINING_MS - 1 });
+      const first = await run(noReview.llm, { remainingTimeMs: () => reviewMinRemainingMs('haiku') - 1 });
       assert.equal(noReview.parses.length, 2);
       assert.equal(noReview.writes.length, 1);
       assert.ok(first.markdown.includes('지연 로딩을 넣었다'));
@@ -735,7 +835,7 @@ describe('createClaudePipeline', () => {
         review: { issues: [ISSUE] },
         revised: REVISED,
       });
-      const second = await run(noRevise.llm, { remainingTimeMs: () => REVISE_MIN_REMAINING_MS - 1 });
+      const second = await run(noRevise.llm, { remainingTimeMs: () => reviseMinRemainingMs('haiku') - 1 });
       assert.equal(noRevise.parses.length, 3);
       assert.equal(noRevise.writes.length, 1);
       assert.ok(second.markdown.includes('지연 로딩을 넣었다'));
@@ -758,7 +858,7 @@ describe('createClaudePipeline', () => {
     it('검토를 건너뛰어도 바깥 펜스로 감싼 초안은 펜스를 벗겨 조립한다', async () => {
       const fenced = `\`\`\`markdown\n${MARKDOWN}\n\`\`\``;
       const { llm } = fakeLlm(PLAN, ANALYSIS, fenced);
-      const { markdown } = await run(llm, { remainingTimeMs: () => REVIEW_MIN_REMAINING_MS - 1 });
+      const { markdown } = await run(llm, { remainingTimeMs: () => reviewMinRemainingMs('haiku') - 1 });
 
       assert.ok(markdown.startsWith('# 지연 로딩'));
       assert.ok(!markdown.includes('```markdown'));

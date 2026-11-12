@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 import { FILL_TARGET_MARKER } from './contract.ts';
 import { GenerationFailure } from './errors.ts';
 import { createClaudeFiller, type FillInput } from './fill.ts';
+import { estimateFillCost } from './generation/estimate.ts';
 import { ESTIMATE_FILL_OUTPUT, estimateTokens } from './generation/limits.ts';
 import type { LlmClient } from './generation/llm.ts';
 import { stagePlan, type StageCall } from './generation/models.ts';
@@ -26,6 +27,7 @@ const CONTEXT: JobContext = {
   length: 'medium',
   requiredBlocks: [],
   locale: 'ko',
+  model: 'haiku',
   referenceUrls: [],
   commitShas: [],
   owner: 'o',
@@ -79,7 +81,7 @@ const input = (overrides: Partial<FillInput> = {}): FillInput & { usage: number[
 };
 
 describe('createClaudeFiller', () => {
-  it('예상량 = system + 사용자 입력(본문·재료·질문·답) + 출력 여유분', () => {
+  it('예상 비용 = system + 사용자 입력(본문·재료·질문·답) 입력과 출력 여유분을 작업 모델 단가로 센 값', () => {
     const { llm, writes } = fakeLlm('문단');
     const filler = createClaudeFiller({ llm });
     const pack = getPromptPack('ko');
@@ -88,9 +90,13 @@ describe('createClaudeFiller', () => {
     assert.equal(ESTIMATE_FILL_OUTPUT, 1_500);
     assert.equal(
       filler.estimate(args),
-      estimateTokens(pack.fill.system) +
-        estimateTokens(pack.fill.user({ context: CONTEXT, blank: BLANK, analysis: ANALYSIS })) +
-        ESTIMATE_FILL_OUTPUT,
+      estimateFillCost(
+        {
+          system: estimateTokens(pack.fill.system),
+          user: estimateTokens(pack.fill.user({ context: CONTEXT, blank: BLANK, analysis: ANALYSIS })),
+        },
+        'haiku',
+      ),
     );
     // 재료가 없으면 그만큼 작다
     assert.ok(filler.estimate(input({ analysis: null })) < filler.estimate(args));
@@ -115,6 +121,18 @@ describe('createClaudeFiller', () => {
     assert.ok(!result.includes('```'), result);
     // 답에 나온 식별자는 인라인 코드로 남는다
     assert.ok(result.includes('`useLazyImage`'), result);
+  });
+
+  it('opus 작업의 빈칸 채우기는 opus low, 예상도 opus 단가', async () => {
+    const { llm, writes } = fakeLlm('문단');
+    const filler = createClaudeFiller({ llm });
+    const opus = input({ context: { ...CONTEXT, model: 'opus' } });
+
+    await filler.fill(opus);
+
+    assert.deepEqual(writes[0].call, { model: 'opus', effort: 'low', fallback: { model: 'haiku', effort: 'medium' } });
+    assert.deepEqual(writes[0].call, stagePlan('opus', 'fill'));
+    assert.ok(filler.estimate(opus) > filler.estimate(input()));
   });
 
   it('재료가 없어도 본문과 답만으로 다듬는다', async () => {

@@ -7,13 +7,14 @@ dayjs.extend(utc);
 dayjs.extend(timezone);
 
 /**
- * 주간 토큰 할당량 규칙 (comdraft Next.js 의 lib/generation/quota.ts 와 같은 로직)
+ * 주간 비용 할당량 규칙 (comdraft Next.js 의 lib/generation/quota.ts 와 같은 로직)
  * - 한도와 비율은 코드에 두지 않고 항상 QuotaPlan(comdraft.quota_plan 행)으로 받음
  */
 
 export interface QuotaPlan {
   role: string;
-  weeklyTokenLimit: number;
+  // 주간 한도 (마이크로달러, comdraft.quota_plan.weekly_cost_limit)
+  weeklyCostLimit: number;
   overrunRatio: number;
   resetTimezone: string;
   resetWeekday: number;
@@ -22,8 +23,8 @@ export interface QuotaPlan {
 
 export interface QuotaJob {
   status: GenerationStatus;
-  estimatedTokens: number | null;
-  usedTokens: number;
+  estimatedCost: number | null;
+  usedCost: number;
   errorCode: string | null;
 }
 
@@ -56,15 +57,15 @@ export const isWithinAllowance = (
   plan: QuotaPlan,
 ): boolean => remaining > 0 && estimate <= remaining * plan.overrunRatio;
 
-// 작업 하나가 이번 주 사용량에 더하는 토큰 수
+// 작업 하나가 이번 주 사용량에 더하는 비용 (마이크로달러)
 export const getJobUsage = (job: QuotaJob): number => {
   if (job.status === 'queued' || job.status === 'running') {
-    return Math.max(job.estimatedTokens ?? 0, job.usedTokens);
+    return Math.max(job.estimatedCost ?? 0, job.usedCost);
   }
 
   if (job.status === 'failed' && job.errorCode === 'quota_exceeded') {
     return 0;
   }
 
-  return job.usedTokens;
+  return job.usedCost;
 };

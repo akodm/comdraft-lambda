@@ -46,8 +46,8 @@ const assertReserved = (reservation: QuotaReservation) => {
  * 작업 한 건 실행: running → 커밋 상세 1회 조회 → 준비 → 예상량 검사 → 구분(1) → 분석(2) → 작성·검토 → 완료(3)
  * - 구분 직후 기획이 작성자에게 물어야 한다고 하면(처음 실행만) 질문을 저장하고 답변 대기(awaiting_input)로 멈춘다
  *   (단계는 0 그대로, 완료·실패 처리 없음, 답을 받으면 Next.js 가 다시 대기열에 넣어 처음부터 다시 실행)
- * - 예상량이 남은 할당량을 넘으면 Claude 를 부르지 않고 quota_exceeded 로 실패 (사용량은 0 으로 셈)
- * - Claude 응답을 받을 때마다 사용 토큰을 바로 누적 (뒤 단계가 실패해도 쓴 만큼은 남음)
+ * - 예상 비용이 남은 주간 한도의 허용 비율을 넘으면 Claude 를 부르지 않고 quota_exceeded 로 실패 (사용량은 0 으로 셈)
+ * - Claude 응답을 받을 때마다 사용 토큰과 비용(모델 단가로 계산)을 바로 누적 (뒤 단계가 실패해도 쓴 만큼은 남음)
  * - 단계를 마칠 때마다 DB 단계를 갱신하고 Realtime 신호 전송
  * - 어떤 오류든 사유 코드로 실패 기록 (Lambda 가 비정상 종료되면 Next.js 가 시간 초과로 처리)
  * - 초안 작성 작업은 분석 단계 뒤 분석을 저장 (저장 실패는 보고만 하고 작업은 계속)
@@ -91,7 +91,7 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
     return true;
   };
 
-  const onUsage = (usage: UsageReport) => jobs.addUsage(jobId, usage.tokens);
+  const onUsage = (usage: UsageReport) => jobs.addUsage(jobId, usage);
 
   // 빈칸 채우기: 결과 Markdown 문단
   const runFill = async (context: JobContext): Promise<string> => {
