@@ -1,4 +1,5 @@
 import type {
+  GenerationClarification,
   GenerationErrorCode,
   GenerationJobKind,
   GenerationStatus,
@@ -54,6 +55,8 @@ export interface JobContext {
   repo: string;
   // kind 가 'fill' 이고 빈칸 값이 모두 있을 때만
   blank?: JobBlank;
+  // 작성 전 되묻기 (null 이면 아직 묻지 않은 작업)
+  clarification: GenerationClarification | null;
 }
 
 export interface JobStore {
@@ -114,7 +117,7 @@ const toUrlList = (value: unknown): string[] => {
 };
 
 // loadContext 조회 행 (빈칸 값은 빈칸 채우기 작업에만 있음)
-interface ContextRow extends Omit<JobContext, 'kind' | 'blank'> {
+interface ContextRow extends Omit<JobContext, 'kind' | 'blank' | 'clarification'> {
   kind: string;
   blankId: string | null;
   blankQuestion: string | null;
@@ -142,6 +145,7 @@ const toContext = (row: ContextRow): JobContext => {
     kind,
     referenceUrls: toUrlList(row.referenceUrls),
     ...(kind === 'fill' ? { blank: toBlank(row) } : {}),
+    clarification: null,
   };
 };
 

@@ -24,6 +24,7 @@ const CONTEXT: JobContext = {
   commitShas: ['b74e3d0aaaa', 'a8f2c91bbbb'],
   owner: 'akodm',
   repo: 'comdraft',
+  clarification: null,
 };
 
 const commit = (sha: string, message: string): CommitDetail => ({

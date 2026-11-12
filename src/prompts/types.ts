@@ -85,6 +85,8 @@ export interface PromptPack {
   voiceRuleMarker: string;
   // 모든 단계 system 에 들어가는 독자 기준 규칙의 고정 구절 (테스트용)
   readerRuleMarker: string;
+  // 기획 system 의 되묻기 판단 규칙의 고정 구절 (테스트용)
+  clarifyRuleMarker: string;
   plan: Stage<PlanPromptInput>;
   analyze: Stage<AnalyzePromptInput>;
   write: Stage<WritePromptInput>;

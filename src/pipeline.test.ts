@@ -29,6 +29,7 @@ const CONTEXT: JobContext = {
   commitShas: ['bbbb2222', 'aaaa1111'],
   owner: 'o',
   repo: 'r',
+  clarification: null,
 };
 
 const PATCH = '@@ -1,2 +1,3 @@\n const a = 1;\n-const b = 2;\n+const b = 3;\n+const c = 4;';
