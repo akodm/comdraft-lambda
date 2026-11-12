@@ -6,6 +6,8 @@ import type {
   GenerationStep,
 } from './contract.ts';
 import type { Database } from './db.ts';
+import { parseJobClarification } from './generation/clarify.ts';
+import type { ClarifyRequest } from './generation/schemas.ts';
 import {
   parseStoredAnalysis,
   type StoredAnalysis,
@@ -77,6 +79,9 @@ export interface JobStore {
   saveAnalysis: (jobId: string, analysis: StoredAnalysis) => Promise<void>;
   // 이 작업과 같은 초안의 가장 최근 완료된 초안 작성 작업이 저장한 분석 (없거나 저장하지 않았으면 null)
   loadLatestAnalysis: (jobId: string) => Promise<StoredAnalysis | null>;
+  // 작성 전 되묻기: 질문을 저장하고 답변 대기로 멈춘다 (running 이고 아직 묻지 않은 작업만, 단계는 그대로, 예상량은 비움)
+  // 그 사이 끝났거나 이미 물었으면 false
+  pauseForInput: (jobId: string, request: ClarifyRequest) => Promise<boolean>;
 }
 
 // reserved: 시작 가능, exceeded: 남은 양 초과, no_plan: 사용자 등급의 정책 행 없음
@@ -119,6 +124,7 @@ const toUrlList = (value: unknown): string[] => {
 // loadContext 조회 행 (빈칸 값은 빈칸 채우기 작업에만 있음)
 interface ContextRow extends Omit<JobContext, 'kind' | 'blank' | 'clarification'> {
   kind: string;
+  clarification: unknown;
   blankId: string | null;
   blankQuestion: string | null;
   blankAnswer: string | null;
@@ -137,7 +143,7 @@ const toBlank = (row: ContextRow): JobBlank | undefined =>
     : undefined;
 
 const toContext = (row: ContextRow): JobContext => {
-  const { blankId, blankQuestion, blankAnswer, blankContext, ...rest } = row;
+  const { blankId, blankQuestion, blankAnswer, blankContext, clarification, ...rest } = row;
   const kind: GenerationJobKind = row.kind === 'fill' ? 'fill' : 'draft';
 
   return {
@@ -145,7 +151,7 @@ const toContext = (row: ContextRow): JobContext => {
     kind,
     referenceUrls: toUrlList(row.referenceUrls),
     ...(kind === 'fill' ? { blank: toBlank(row) } : {}),
-    clarification: null,
+    clarification: kind === 'draft' ? parseJobClarification(clarification) : null,
   };
 };
 
@@ -168,6 +174,7 @@ export const createJobStore = (sql: Database): JobStore => ({
         p.reference_urls as "referenceUrls",
         p.blank_id as "blankId", p.blank_question as "blankQuestion",
         p.blank_answer as "blankAnswer", p.blank_context as "blankContext",
+        p.clarification,
         r.owner_login as owner, r.name as repo
       from comdraft.draft_prompt p
       join comdraft.draft d on d.id = p.draft_id
@@ -319,5 +326,24 @@ export const createJobStore = (sql: Database): JobStore => ({
     `;
 
     return row ? parseStoredAnalysis(row.analysis) : null;
+  },
+
+  pauseForInput: async (jobId, { reason, questions }) => {
+    // 인터페이스 타입은 JSON 값으로 바로 넘길 수 없어 필드만 뽑아 새 객체로 만든다
+    const stored = {
+      reason,
+      questions: questions.map(({ id, question, options }) => ({ id, question, options })),
+      answers: null,
+    };
+    const rows = await sql`
+      update comdraft.draft_prompt
+      set status = 'awaiting_input',
+        clarification = ${sql.json(stored)},
+        estimated_tokens = null
+      where id = ${jobId} and status = 'running' and clarification is null
+      returning id
+    `;
+
+    return rows.length > 0;
   },
 });

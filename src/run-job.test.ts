@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import type { GenerationBroadcastPayload } from './contract.ts';
+import type { GenerationBroadcastPayload, GenerationClarification } from './contract.ts';
+import type { ClarifyRequest } from './generation/schemas.ts';
 import { GithubApiError } from './errors.ts';
 import { FILL_TARGET_MARKER } from './contract.ts';
 import { createClaudeFiller } from './fill.ts';
@@ -49,7 +50,9 @@ const createMemoryJobs = (
     analysis: null as StoredAnalysis | null,
     // 같은 초안의 최근 완료 초안 작성 작업이 저장한 분석 (loadLatestAnalysis 가 돌려줌)
     latestAnalysis: null as StoredAnalysis | null,
+    clarification: null as GenerationClarification | null,
   };
+  const pauseCalls: ClarifyRequest[] = [];
 
   const jobs: JobStore = {
     markRunning: async () => {
@@ -102,9 +105,23 @@ const createMemoryJobs = (
       state.analysis = analysis;
     },
     loadLatestAnalysis: async () => state.latestAnalysis,
+    pauseForInput: async (_jobId, request) => {
+      pauseCalls.push(request);
+
+      if (state.status !== 'running' || state.clarification !== null) {
+        return false;
+      }
+
+      Object.assign(state, {
+        status: 'awaiting_input',
+        clarification: { ...request, answers: null },
+        estimatedTokens: null,
+      });
+      return true;
+    },
   };
 
-  return { jobs, state };
+  return { jobs, state, pauseCalls };
 };
 
 // 빈칸 채우기용 가짜 LLM (write 호출 수와 받은 입력을 기록, 호출마다 정해 둔 사용량을 보고)
@@ -129,7 +146,7 @@ const createDependencies = (
   initialStatus?: string,
   reservation?: QuotaReservation,
 ) => {
-  const { jobs, state } = createMemoryJobs(initialStatus, reservation);
+  const { jobs, state, pauseCalls } = createMemoryJobs(initialStatus, reservation);
   const signals: GenerationBroadcastPayload[] = [];
 
   const dependencies: RunJobDependencies = {
@@ -145,13 +162,15 @@ const createDependencies = (
     ...overrides,
   };
 
-  return { dependencies, state, signals };
+  return { dependencies, state, signals, pauseCalls };
 };
 
 // Claude 호출 대신 단계마다 정해 둔 사용량을 보고하는 파이프라인 (stages 에 시작한 단계가 쌓인다)
 const createUsagePipeline = (
   usage: { classify: number; analyze: number; write: number },
   failAt?: 'analyze' | 'write',
+  // 기획이 되묻기로 한 경우의 질문 (없으면 묻지 않음)
+  clarify: ClarifyRequest | null = null,
 ) => {
   const stages: string[] = [];
   const stage = async (
@@ -170,6 +189,7 @@ const createUsagePipeline = (
     prepare: async () => ({}),
     estimate: () => 12_345,
     classify: async ({ onUsage }) => stage('classify', onUsage),
+    clarification: () => clarify,
     analyze: async ({ onUsage }) => stage('analyze', onUsage),
     write: async ({ onUsage }) => {
       await stage('write', onUsage);
@@ -214,6 +234,89 @@ describe('runJob', () => {
     assert.equal(await runJob('job-1', dependencies), 'completed');
     assert.equal(state.result, '# 결과\n\n검토 뒤');
     assert.deepEqual(steps, [1, 2]);
+  });
+
+  describe('되묻기', () => {
+    const REQUEST: ClarifyRequest = {
+      reason: '독자가 갈린다',
+      questions: [{ id: 'Q1', question: '누구를 위한 글인가요?', options: ['입문자', '실무자'] }],
+    };
+    const USAGE = { classify: 1_000, analyze: 2_000, write: 3_000 };
+
+    it('기획이 묻기로 하면 질문을 저장하고 답변 대기로 끝낸다', async () => {
+      const { pipeline, stages } = createUsagePipeline(USAGE, undefined, REQUEST);
+      const { dependencies, state, signals, pauseCalls } = createDependencies({ pipeline });
+      const steps: number[] = [];
+      const markStep = dependencies.jobs.markStep;
+      dependencies.jobs.markStep = async (jobId, step) => {
+        steps.push(step);
+        return markStep(jobId, step);
+      };
+      let completed = false;
+      const complete = dependencies.jobs.complete;
+      dependencies.jobs.complete = async (jobId, result) => {
+        completed = true;
+        return complete(jobId, result);
+      };
+
+      assert.equal(await runJob('job-1', dependencies), 'awaiting_input');
+      assert.deepEqual(pauseCalls, [REQUEST]);
+      assert.equal(state.status, 'awaiting_input');
+      assert.deepEqual(state.clarification, { ...REQUEST, answers: null });
+      assert.equal(state.estimatedTokens, null);
+      // 기획까지만 돌고 분석·작성은 시작하지 않는다
+      assert.deepEqual(stages, ['classify']);
+      assert.deepEqual(steps, []);
+      assert.equal(completed, false);
+      assert.equal(state.result, null);
+      assert.deepEqual(
+        signals.map(({ status, step }) => `${status}:${step}`),
+        ['running:0', 'awaiting_input:0'],
+      );
+    });
+
+    it('답변 대기로 바꾸지 못하면(그 사이 끝남) cancelled 로 끝내고 신호를 보내지 않는다', async () => {
+      const { pipeline, stages } = createUsagePipeline(USAGE, undefined, REQUEST);
+      const { dependencies, state, signals } = createDependencies({ pipeline });
+      dependencies.jobs.pauseForInput = async () => false;
+
+      assert.equal(await runJob('job-1', dependencies), 'cancelled');
+      assert.deepEqual(stages, ['classify']);
+      assert.equal(state.status, 'running');
+      assert.deepEqual(
+        signals.map(({ status, step }) => `${status}:${step}`),
+        ['running:0'],
+      );
+    });
+
+    it('재실행(clarification 있음)에서는 묻지 않고 완료한다', async () => {
+      const { pipeline } = createUsagePipeline(USAGE);
+      const { dependencies, state, signals, pauseCalls } = createDependencies({ pipeline });
+      dependencies.jobs.loadContext = async () => ({
+        ...CONTEXT,
+        clarification: { ...REQUEST, answers: [{ id: 'Q1', answer: '입문자' }] },
+      });
+
+      assert.equal(await runJob('job-1', dependencies), 'completed');
+      assert.deepEqual(pauseCalls, []);
+      assert.equal(state.status, 'completed');
+      assert.equal(signals.at(-1)?.status, 'completed');
+    });
+
+    it('예상량 기록 뒤에 멈추므로 멈추는 순간 예상량이 비워진다', async () => {
+      const { pipeline } = createUsagePipeline(USAGE, undefined, REQUEST);
+      const { dependencies, state } = createDependencies({ pipeline });
+      const reserve = dependencies.jobs.reserveQuota;
+      let reserved: number | null = null;
+      dependencies.jobs.reserveQuota = async (jobId, estimate) => {
+        reserved = estimate;
+        return reserve(jobId, estimate);
+      };
+
+      assert.equal(await runJob('job-1', dependencies), 'awaiting_input');
+      assert.equal(reserved, 12_345);
+      assert.equal(state.estimatedTokens, null);
+    });
   });
 
   it('작업의 초안이 삭제돼 맥락이 없으면 Claude 호출 없이 internal 로 실패한다', async () => {
@@ -448,6 +551,7 @@ describe('runJob (분석 저장)', () => {
     prepare: async () => ({}),
     estimate: () => 1,
     classify: async () => ({}),
+    clarification: () => null,
     analyze: async ({ onAnalysis }) => {
       await onAnalysis?.(STORED);
     },
