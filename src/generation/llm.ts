@@ -7,11 +7,16 @@ import {
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import type { z } from 'zod';
 
+import { GENERATION_MODEL_IDS, type GenerationModel } from '../contract.ts';
 import { GenerationFailure } from '../errors.ts';
+import { usageCost, type StageCall, type UsageTokens } from './models.ts';
 
-export const GENERATION_MODEL = 'claude-haiku-5-5';
-// 요청 하나의 제한 시간 (Lambda 전체 제한 900초보다 짧게, 사고 깊이 medium·high 에서 출력 32,000토큰을 받을 수 있게)
-export const LLM_TIMEOUT_MS = 180_000;
+// 요청 하나의 모델별 제한 시간 (Lambda 전체 제한 720초보다 짧게, 사고 깊이 medium·high 에서 출력 32,000토큰을 받을 수 있게)
+export const LLM_TIMEOUT_MS_BY_MODEL: Record<GenerationModel, number> = {
+  haiku: 180_000,
+  sonnet: 240_000,
+  opus: 300_000,
+};
 // 호출이 끝난 뒤 결과 저장이나 실패 기록에 남겨 두는 실행 시간
 export const SAFETY_MARGIN_MS = 15_000;
 // 이보다 짧은 제한 시간으로는 호출하지 않는다 (응답을 받기 어려워 시간 초과로 끝냄)
@@ -29,22 +34,28 @@ export interface LlmOptions {
 // 사고 깊이 (adaptive thinking 은 기본 켜짐이라 thinking 은 보내지 않고 effort 로만 조절)
 export type Effort = 'low' | 'medium' | 'high';
 
-// 응답 하나를 받을 때마다 그 응답의 사용 토큰을 넘김 (할당량 기록용)
-export type OnUsage = (tokens: number) => void | Promise<void>;
+// 응답 하나의 사용량: 토큰 합과 그 모델 단가로 계산한 비용(마이크로달러)
+export interface UsageReport {
+  tokens: number;
+  cost: number;
+}
+
+// 응답 하나를 받을 때마다 그 응답의 사용량을 넘김 (할당량 기록용)
+export type OnUsage = (usage: UsageReport) => void | Promise<void>;
 
 export interface LlmClient {
   parse: <T>(req: {
     system: string;
     user: string;
     schema: z.ZodType<T>;
-    effort: Effort;
+    call: StageCall;
     maxTokens: number;
     onUsage?: OnUsage;
   }) => Promise<T>;
   write: (req: {
     system: string;
     user: string;
-    effort: Effort;
+    call: StageCall;
     maxTokens: number;
     onUsage?: OnUsage;
   }) => Promise<string>;
@@ -57,12 +68,19 @@ export const sumUsage = (usage: Anthropic.Usage): number =>
   (usage.cache_creation_input_tokens ?? 0) +
   (usage.cache_read_input_tokens ?? 0);
 
+const toUsageTokens = (usage: Anthropic.Usage): UsageTokens => ({
+  input: usage.input_tokens,
+  output: usage.output_tokens,
+  cacheWrite: usage.cache_creation_input_tokens ?? 0,
+  cacheRead: usage.cache_read_input_tokens ?? 0,
+});
+
 const fail = () => new GenerationFailure('llm_failed');
 const timeout = () => new GenerationFailure('timeout');
 
 // 이번 호출에 쓸 수 있는 시간: 호출 하나의 제한과 (남은 시간 - 여유분) 중 짧은 쪽
-const callBudget = (remainingMs: number): number =>
-  Math.min(LLM_TIMEOUT_MS, remainingMs - SAFETY_MARGIN_MS);
+const callBudget = (model: GenerationModel, remainingMs: number): number =>
+  Math.min(LLM_TIMEOUT_MS_BY_MODEL[model], remainingMs - SAFETY_MARGIN_MS);
 
 // 연결 오류와 408·409·429·5xx 만 다시 시도한다 (SDK 기본 재시도 기준과 같음)
 const isRetryable = (error: unknown): boolean => {
@@ -97,10 +115,11 @@ const assertCompleted = (stopReason: string | null) => {
  */
 const callWithDeadline = async <T>(
   { remainingTimeMs, sleep = defaultSleep }: LlmOptions,
+  model: GenerationModel,
   run: (options: RequestOptions) => Promise<T>,
 ): Promise<T> => {
   for (let attempt = 0; ; attempt += 1) {
-    const budget = callBudget(remainingTimeMs());
+    const budget = callBudget(model, remainingTimeMs());
     if (budget <= MIN_CALL_MS) {
       throw timeout();
     }
@@ -111,7 +130,7 @@ const callWithDeadline = async <T>(
     try {
       return await run({ timeout: budget, maxRetries: 0, signal: controller.signal });
     } catch (error) {
-      const shortened = budget < LLM_TIMEOUT_MS;
+      const shortened = budget < LLM_TIMEOUT_MS_BY_MODEL[model];
       if (
         controller.signal.aborted ||
         (shortened && error instanceof APIConnectionTimeoutError)
@@ -124,7 +143,8 @@ const callWithDeadline = async <T>(
 
       const canRetry =
         attempt === 0 &&
-        callBudget(remainingTimeMs() - RETRY_DELAY_MS) >= LLM_TIMEOUT_MS;
+        callBudget(model, remainingTimeMs() - RETRY_DELAY_MS) >=
+          LLM_TIMEOUT_MS_BY_MODEL[model];
       if (!canRetry) {
         throw fail();
       }
@@ -140,11 +160,45 @@ const callWithDeadline = async <T>(
  * 응답을 받은 뒤 사용량부터 보고한다
  * - 재시도 판단(callWithDeadline) 밖에서 부르므로, 기록 실패가 llm_failed 로 바뀌거나 호출을 다시 하게 만들지 않는다
  * - 거절·토큰 초과 응답도 토큰은 쓴 것이라 검사보다 먼저 보고한다
+ * - 비용은 그 응답을 만든 모델의 단가로 계산한다
  */
-const reportUsage = async (message: { usage: Anthropic.Usage }, onUsage?: OnUsage) => {
+const reportUsage = async (
+  model: GenerationModel,
+  message: { usage: Anthropic.Usage },
+  onUsage?: OnUsage,
+) => {
   if (onUsage) {
-    await onUsage(sumUsage(message.usage));
+    await onUsage({
+      tokens: sumUsage(message.usage),
+      cost: usageCost(model, toUsageTokens(message.usage)),
+    });
   }
+};
+
+/**
+ * 고른 모델로 한 번 부르고, 거절(refusal)이면 fallback(haiku)으로 한 번 더 부른다
+ * - 두 호출 모두 사용량을 각자 모델 단가로 보고한다
+ * - fallback 이 없거나 fallback 도 거절하면 돌려주는 응답의 stop_reason 이 refusal 이라 호출한 쪽의 검사가 llm_failed 로 만든다
+ */
+const callWithFallback = async (
+  options: LlmOptions,
+  call: StageCall,
+  request: (
+    model: GenerationModel,
+    effort: Effort,
+  ) => (requestOptions: RequestOptions) => Promise<Anthropic.Message>,
+  onUsage?: OnUsage,
+): Promise<Anthropic.Message> => {
+  const first = await callWithDeadline(options, call.model, request(call.model, call.effort));
+  await reportUsage(call.model, first, onUsage);
+  if (first.stop_reason !== 'refusal' || !call.fallback) {
+    return first;
+  }
+
+  const { model, effort } = call.fallback;
+  const second = await callWithDeadline(options, model, request(model, effort));
+  await reportUsage(model, second, onUsage);
+  return second;
 };
 
 export const createAnthropicLlm = (
@@ -154,24 +208,27 @@ export const createAnthropicLlm = (
   // SDK 의 messages.parse 는 응답을 구조화 출력으로 바꾸다 실패하면 응답 없이 던지므로,
   // 스트림의 최종 응답을 받아 사용량을 먼저 보고한 뒤 직접 파싱한다
   // (사고 깊이를 올리면 응답이 길어져 한 번에 받는 요청보다 스트림이 끊기지 않는다)
-  parse: async ({ system, user, schema, effort, maxTokens, onUsage }) => {
+  parse: async ({ system, user, schema, call, maxTokens, onUsage }) => {
     const format = zodOutputFormat(schema);
-    const message = await callWithDeadline(options, (requestOptions) =>
-      client.messages
-        .stream(
-          {
-            model: GENERATION_MODEL,
-            max_tokens: maxTokens,
-            system,
-            messages: [{ role: 'user', content: user }],
-            output_config: { effort, format },
-          },
-          requestOptions,
-        )
-        .finalMessage(),
+    const message = await callWithFallback(
+      options,
+      call,
+      (model, effort) => (requestOptions) =>
+        client.messages
+          .stream(
+            {
+              model: GENERATION_MODEL_IDS[model],
+              max_tokens: maxTokens,
+              system,
+              messages: [{ role: 'user', content: user }],
+              output_config: { effort, format },
+            },
+            requestOptions,
+          )
+          .finalMessage(),
+      onUsage,
     );
 
-    await reportUsage(message, onUsage);
     assertCompleted(message.stop_reason);
     // SDK 와 같이 첫 text 블록을 결과로 본다 (thinking 블록은 건너뜀)
     const text = message.content.find((block) => block.type === 'text')?.text;
@@ -186,23 +243,26 @@ export const createAnthropicLlm = (
     }
   },
 
-  write: async ({ system, user, effort, maxTokens, onUsage }) => {
-    const message = await callWithDeadline(options, (requestOptions) =>
-      client.messages
-        .stream(
-          {
-            model: GENERATION_MODEL,
-            max_tokens: maxTokens,
-            system,
-            messages: [{ role: 'user', content: user }],
-            output_config: { effort },
-          },
-          requestOptions,
-        )
-        .finalMessage(),
+  write: async ({ system, user, call, maxTokens, onUsage }) => {
+    const message = await callWithFallback(
+      options,
+      call,
+      (model, effort) => (requestOptions) =>
+        client.messages
+          .stream(
+            {
+              model: GENERATION_MODEL_IDS[model],
+              max_tokens: maxTokens,
+              system,
+              messages: [{ role: 'user', content: user }],
+              output_config: { effort },
+            },
+            requestOptions,
+          )
+          .finalMessage(),
+      onUsage,
     );
 
-    await reportUsage(message, onUsage);
     assertCompleted(message.stop_reason);
     // thinking 블록이 앞에 올 수 있어 text 블록만 이어 붙임
     const text = message.content

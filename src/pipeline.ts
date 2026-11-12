@@ -10,7 +10,8 @@ import {
   REVISE_MIN_REMAINING_MS,
 } from './generation/limits.ts';
 import { fetchReferenceLinks, type PreparedLink } from './generation/links.ts';
-import type { LlmClient } from './generation/llm.ts';
+import type { LlmClient, OnUsage } from './generation/llm.ts';
+import { stagePlan } from './generation/models.ts';
 import {
   indexHunks,
   prepareCommits,
@@ -49,8 +50,8 @@ import { renderCatalog, renderClarification, resolveOptions } from './prompts/re
 export interface PipelineInput {
   context: JobContext;
   commits: CommitDetail[];
-  // Claude 응답 하나를 받을 때마다 그 사용 토큰을 기록
-  onUsage: (tokens: number) => Promise<void>;
+  // Claude 응답 하나를 받을 때마다 그 사용량(토큰·비용)을 기록
+  onUsage: OnUsage;
   // 분석 단계를 마치면 나중의 빈칸 채우기가 쓸 재료를 저장
   onAnalysis?: (analysis: StoredAnalysis) => Promise<void>;
 }
@@ -103,15 +104,16 @@ export interface ClaudePipelineDependencies {
   reportError?: (error: unknown) => void;
 }
 
-// 단계별 사고 깊이와 출력 상한 (Haiku 로 품질을 끌어올리려고 Lambda 900초, 호출 하나 180초 안에서 올렸다)
+// 단계별 호출(모델·사고 깊이)과 출력 상한 (지금은 모두 Haiku, 고른 모델로 바꾸는 것은 다음 작업)
 // - 생각과 출력이 상한 안에 들어오도록 넉넉하게 잡는다 (분석은 low·16,000 에서 생각만으로 상한을 다 쓴 적이 있다)
-const PLAN_STAGE = { effort: 'medium', maxTokens: 16_000 } as const;
-const ANALYZE_STAGE = { effort: 'medium', maxTokens: 32_000 } as const;
-const REVIEW_STAGE = { effort: 'medium', maxTokens: 16_000 } as const;
+const PLAN_STAGE = { call: stagePlan('haiku', 'plan'), maxTokens: 16_000 };
+const ANALYZE_STAGE = { call: stagePlan('haiku', 'analyze'), maxTokens: 32_000 };
+const REVIEW_STAGE = { call: stagePlan('haiku', 'review'), maxTokens: 16_000 };
 // 고쳐 쓰기 최대 횟수 (처음 한 번 + 검사에서 거절되면 이유를 알려 주고 한 번 더)
 const REVISE_ATTEMPTS = 2;
 // 글을 쓰는 작성·고쳐 쓰기는 한 단계 더 깊게(high) 생각한다
-const WORK_STAGE = { effort: 'high', maxTokens: 32_000 } as const;
+const WRITE_STAGE = { call: stagePlan('haiku', 'write'), maxTokens: 32_000 };
+const REVISE_STAGE = { call: stagePlan('haiku', 'revise'), maxTokens: 32_000 };
 
 // 링크는 글의 보조 근거라 가져오기에 실패해도 작업을 멈추지 않는다
 const safeFetchLinks = async (
@@ -262,7 +264,7 @@ export const createClaudePipeline = ({
       system: pack.write.system,
       user: pack.write.user({ context, plan, analysis, hunks: selected, links }),
       onUsage,
-      ...WORK_STAGE,
+      ...WRITE_STAGE,
     });
     // 계획에 없이 덧붙인 절을 덜어 내고 제목 수준을 계획대로 맞춘다 (검토·고쳐 쓰기도 이 초안을 기준으로 한다)
     const draft = alignDraftToPlan(unwrapOuterFence(written), plan.sections);
@@ -314,7 +316,7 @@ export const createClaudePipeline = ({
             system: pack.revise.system,
             user: pack.revise.user({ ...base, issues, retry }),
             onUsage,
-            ...WORK_STAGE,
+            ...REVISE_STAGE,
           });
           const check = checkRevision(draft, revised, linkIds);
 

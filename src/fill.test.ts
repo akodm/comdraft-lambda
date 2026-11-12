@@ -3,9 +3,10 @@ import { describe, it } from 'node:test';
 
 import { FILL_TARGET_MARKER } from './contract.ts';
 import { GenerationFailure } from './errors.ts';
-import { createClaudeFiller, FILL_STAGE, type FillInput } from './fill.ts';
+import { createClaudeFiller, type FillInput } from './fill.ts';
 import { ESTIMATE_FILL_OUTPUT, estimateTokens } from './generation/limits.ts';
 import type { LlmClient } from './generation/llm.ts';
+import { stagePlan, type StageCall } from './generation/models.ts';
 import type { StoredAnalysis } from './generation/stored-analysis.ts';
 import type { JobBlank, JobContext } from './jobs.ts';
 import { getPromptPack } from './prompts/index.ts';
@@ -42,7 +43,7 @@ const ANALYSIS: StoredAnalysis = {
 interface WriteCall {
   system: string;
   user: string;
-  effort: string;
+  call: StageCall;
   maxTokens: number;
 }
 
@@ -56,7 +57,7 @@ const fakeLlm = (markdown: string, usage = 700) => {
     },
     write: async (req) => {
       writes.push(req);
-      await req.onUsage?.(usage);
+      await req.onUsage?.({ tokens: usage, cost: usage * 2 });
       return markdown;
     },
   };
@@ -69,7 +70,7 @@ const input = (overrides: Partial<FillInput> = {}): FillInput & { usage: number[
     context: CONTEXT,
     blank: BLANK,
     analysis: ANALYSIS,
-    onUsage: async (tokens) => {
+    onUsage: async ({ tokens }) => {
       usage.push(tokens);
     },
     usage,
@@ -106,7 +107,7 @@ describe('createClaudeFiller', () => {
     assert.equal(writes.length, 1);
     assert.equal(parses(), 0);
     assert.deepEqual(args.usage, [700]);
-    assert.deepEqual([writes[0].effort, writes[0].maxTokens], [FILL_STAGE.effort, FILL_STAGE.maxTokens]);
+    assert.deepEqual([writes[0].call, writes[0].maxTokens], [stagePlan('haiku', 'fill'), 8_000]);
     assert.equal(writes[0].system, getPromptPack('ko').fill.system);
     assert.ok(writes[0].user.includes('<answer>\n3초 정도 걸렸다. useLazyImage 로 고쳤다\n</answer>'));
     assert.ok(!result.includes('#'), result);

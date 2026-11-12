@@ -8,7 +8,8 @@ import type { PreparedLink } from './generation/links.ts';
 import { estimateJobTokens } from './generation/estimate.ts';
 import { estimateTokens, REVIEW_MIN_REMAINING_MS, REVISE_MIN_REMAINING_MS } from './generation/limits.ts';
 import { GenerationFailure } from './errors.ts';
-import type { Effort, LlmClient } from './generation/llm.ts';
+import type { LlmClient, OnUsage } from './generation/llm.ts';
+import { stagePlan, type StageCall } from './generation/models.ts';
 import type { Analysis, RawPlan } from './generation/schemas.ts';
 import type { StoredAnalysis } from './generation/stored-analysis.ts';
 import {
@@ -82,13 +83,14 @@ const MARKDOWN = '# 지연 로딩\n\n## 적용\n\n지연 로딩을 넣었다 {{c
 interface ParseCall {
   system: string;
   user: string;
-  effort: string;
+  call: StageCall;
   maxTokens: number;
-  onUsage?: (tokens: number) => void | Promise<void>;
+  onUsage?: OnUsage;
 }
 
 // 가짜 LLM 이 호출마다 보고하는 사용량
 const CALL_USAGE = 100;
+const CALL_COST = 7;
 
 // 응답은 값이면 그대로 돌려주고 Error 면 던진다
 type Reply<T> = T | Error;
@@ -131,19 +133,19 @@ const fakeLlm = (
       system: string;
       user: string;
       schema: z.ZodType<T>;
-      effort: Effort;
+      call: StageCall;
       maxTokens: number;
-      onUsage?: (tokens: number) => void | Promise<void>;
+      onUsage?: OnUsage;
     }) => {
       parses.push(req);
-      await req.onUsage?.(CALL_USAGE);
+      await req.onUsage?.({ tokens: CALL_USAGE, cost: CALL_COST });
       const result = reply(parseReplies[parseIndex]);
       parseIndex += 1;
       return result as T;
     },
     write: async (req) => {
       writes.push(req);
-      await req.onUsage?.(CALL_USAGE);
+      await req.onUsage?.({ tokens: CALL_USAGE, cost: CALL_COST });
       const result = reply(writeReplies[writeIndex]);
       writeIndex += 1;
       return result;
@@ -175,7 +177,7 @@ const run = async (
   const input: PipelineInput = {
     context: { ...CONTEXT, ...options.context },
     commits: options.commits ?? COMMITS,
-    onUsage: async (tokens) => {
+    onUsage: async ({ tokens }) => {
       usage.push(tokens);
     },
     onAnalysis: async (analysis) => {
@@ -222,14 +224,17 @@ describe('createClaudePipeline', () => {
     assert.ok(markdown.includes(':::blank {kind="motivation" hint="왜 했나"}\n:::'));
     assert.ok(!markdown.includes('{{'));
     assert.deepEqual(
-      parses.map(({ effort, maxTokens }) => [effort, maxTokens]),
-      // 분석은 입력이 커서 medium 이면 생각만으로 출력 상한을 다 쓸 수 있어 low (작성은 medium)
-      // Haiku 로 품질을 끌어올리려고 사고 깊이와 출력 상한을 올렸다 (Lambda 900초, 호출 하나 180초)
-      [['medium', 16_000], ['medium', 32_000], ['medium', 16_000]],
+      parses.map(({ call, maxTokens }) => [call, maxTokens]),
+      // 지금은 모두 Haiku (기획·분석·검토 medium), 사고 깊이와 출력 상한은 이전과 같다
+      [
+        [stagePlan('haiku', 'plan'), 16_000],
+        [stagePlan('haiku', 'analyze'), 32_000],
+        [stagePlan('haiku', 'review'), 16_000],
+      ],
     );
     assert.deepEqual(
-      writes.map(({ effort, maxTokens }) => [effort, maxTokens]),
-      [['high', 32_000]],
+      writes.map(({ call, maxTokens }) => [call, maxTokens]),
+      [[stagePlan('haiku', 'write'), 32_000]],
     );
   });
 

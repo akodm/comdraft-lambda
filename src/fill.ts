@@ -1,7 +1,8 @@
 import { sanitizeFill } from './generation/assemble.ts';
 import { estimateFillTokens } from './generation/estimate.ts';
 import { estimateTokens } from './generation/limits.ts';
-import type { LlmClient } from './generation/llm.ts';
+import type { LlmClient, OnUsage } from './generation/llm.ts';
+import { stagePlan } from './generation/models.ts';
 import type { StoredAnalysis } from './generation/stored-analysis.ts';
 import type { JobBlank, JobContext } from './jobs.ts';
 import { getPromptPack } from './prompts/index.ts';
@@ -17,8 +18,8 @@ export interface FillInput {
   blank: JobBlank;
   // 같은 초안의 최근 완료된 초안 작성 작업이 저장한 분석 (없으면 본문과 답만으로 다듬음)
   analysis: StoredAnalysis | null;
-  // Claude 응답을 받으면 그 사용 토큰을 기록
-  onUsage: (tokens: number) => Promise<void>;
+  // Claude 응답을 받으면 그 사용량(토큰·비용)을 기록
+  onUsage: OnUsage;
 }
 
 export interface BlankFiller {
@@ -29,7 +30,7 @@ export interface BlankFiller {
 }
 
 // 다듬기는 짧은 글이라 사고 깊이를 낮게, 출력 상한은 사고 토큰을 감안해 넉넉하게
-export const FILL_STAGE = { effort: 'medium', maxTokens: 8_000 } as const;
+export const FILL_STAGE = { call: stagePlan('haiku', 'fill'), maxTokens: 8_000 };
 
 const buildPrompt = ({ context, blank, analysis }: FillInput) => {
   const pack = getPromptPack(context.locale);

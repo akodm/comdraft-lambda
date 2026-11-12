@@ -5,7 +5,7 @@ import type { ClarifyRequest } from './generation/schemas.ts';
 import { GithubApiError } from './errors.ts';
 import { FILL_TARGET_MARKER } from './contract.ts';
 import { createClaudeFiller } from './fill.ts';
-import type { LlmClient } from './generation/llm.ts';
+import type { LlmClient, OnUsage } from './generation/llm.ts';
 import type { StoredAnalysis } from './generation/stored-analysis.ts';
 import type { CommitDetail } from './github.ts';
 import type { JobContext, JobStore, QuotaReservation } from './jobs.ts';
@@ -135,7 +135,7 @@ const createFillLlm = (markdown = '첫 화면이 3초 정도 걸렸다.', usage 
     },
     write: async (req) => {
       calls.push({ system: req.system, user: req.user });
-      await req.onUsage?.(usage);
+      await req.onUsage?.({ tokens: usage, cost: usage * 2 });
       return markdown;
     },
   };
@@ -176,14 +176,14 @@ const createUsagePipeline = (
   const stages: string[] = [];
   const stage = async (
     name: 'classify' | 'analyze' | 'write',
-    onUsage: (tokens: number) => Promise<void>,
+    onUsage: OnUsage,
   ) => {
     stages.push(name);
     // 실패 단계는 응답을 받지 못한 호출처럼 사용량 없이 던진다
     if (failAt === name) {
       throw new Error(`${name} 실패`);
     }
-    await onUsage(usage[name]);
+    await onUsage({ tokens: usage[name], cost: usage[name] * 2 });
   };
 
   const pipeline: Pipeline = {

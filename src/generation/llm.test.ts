@@ -12,12 +12,13 @@ import { z } from 'zod';
 import { GenerationFailure } from '../errors.ts';
 import {
   createAnthropicLlm as createLlm,
-  GENERATION_MODEL,
-  LLM_TIMEOUT_MS,
+  LLM_TIMEOUT_MS_BY_MODEL,
   MIN_CALL_MS,
   SAFETY_MARGIN_MS,
   type LlmOptions,
+  type UsageReport,
 } from './llm.ts';
+import type { StageCall } from './models.ts';
 
 type Req = Record<string, any>;
 
@@ -54,8 +55,16 @@ const jsonReply = (text: string, stop_reason = 'end_turn') => ({
     { type: 'text', text },
   ],
 });
-const parseReq = { system: 'sys', user: 'usr', schema, effort: 'low' as const, maxTokens: 8000 };
-const writeReq = { system: 'sys', user: 'usr', effort: 'medium' as const, maxTokens: 6000 };
+const HAIKU_LOW: StageCall = { model: 'haiku', effort: 'low', fallback: null };
+const HAIKU_MEDIUM: StageCall = { model: 'haiku', effort: 'medium', fallback: null };
+// sonnet 을 골랐을 때의 호출 (거절되면 haiku 로 다시)
+const SONNET_CALL: StageCall = {
+  model: 'sonnet',
+  effort: 'low',
+  fallback: { model: 'haiku', effort: 'medium' },
+};
+const parseReq = { system: 'sys', user: 'usr', schema, call: HAIKU_LOW, maxTokens: 8000 };
+const writeReq = { system: 'sys', user: 'usr', call: HAIKU_MEDIUM, maxTokens: 6000 };
 
 const rejectsLlmFailed = async (promise: Promise<unknown>) =>
   assert.rejects(promise, (error) => {
@@ -75,8 +84,7 @@ describe('createAnthropicLlm.parse', () => {
     const { method, req, options } = calls[0];
     // 사고 깊이를 올리면 응답이 길어져 한 번에 받는 요청은 끊기기 쉬워 구조화 출력도 스트림으로 받는다
     assert.equal(method, 'stream');
-    assert.equal(req.model, GENERATION_MODEL);
-    assert.equal(req.model, 'claude-haiku-5-5');
+        assert.equal(req.model, 'claude-haiku-5-5');
     assert.equal(req.max_tokens, 8000);
     assert.equal(req.system, 'sys');
     assert.deepEqual(req.messages, [{ role: 'user', content: 'usr' }]);
@@ -86,7 +94,7 @@ describe('createAnthropicLlm.parse', () => {
     assert.equal('top_p' in req, false);
     assert.equal('top_k' in req, false);
     assert.equal('thinking' in req, false);
-    assert.equal(options.timeout, LLM_TIMEOUT_MS);
+    assert.equal(options.timeout, LLM_TIMEOUT_MS_BY_MODEL.haiku);
     assert.equal(options.maxRetries, 0);
     assert.ok(options.signal instanceof AbortSignal);
   });
@@ -143,7 +151,7 @@ describe('createAnthropicLlm.write', () => {
     assert.equal('format' in req.output_config, false);
     assert.equal('temperature' in req, false);
     assert.equal('thinking' in req, false);
-    assert.equal(options.timeout, LLM_TIMEOUT_MS);
+    assert.equal(options.timeout, LLM_TIMEOUT_MS_BY_MODEL.haiku);
     assert.equal(options.maxRetries, 0);
     assert.ok(options.signal instanceof AbortSignal);
   });
@@ -246,7 +254,7 @@ describe('createAnthropicLlm 시간 예산', () => {
     it(`${method}: 새 시도 한 번을 온전히 할 시간이 없으면 재시도하지 않는다`, async () => {
       const { client, calls } = fakeClient(failThen([overloaded()], ok));
       const llm = createAnthropicLlm(client, {
-        remainingTimeMs: () => SAFETY_MARGIN_MS + LLM_TIMEOUT_MS - 1,
+        remainingTimeMs: () => SAFETY_MARGIN_MS + LLM_TIMEOUT_MS_BY_MODEL.haiku - 1,
       });
       await rejectsLlmFailed(run(llm));
       assert.equal(calls.length, 1);
@@ -314,13 +322,13 @@ describe('createAnthropicLlm 사용량 보고', () => {
   for (const [method, call, ok] of [
     [
       'parse',
-      (llm: ReturnType<typeof createLlm>, onUsage: (tokens: number) => void) =>
+      (llm: ReturnType<typeof createLlm>, onUsage: (usage: UsageReport) => void) =>
         llm.parse({ ...parseReq, onUsage }),
       okParse,
     ],
     [
       'write',
-      (llm: ReturnType<typeof createLlm>, onUsage: (tokens: number) => void) =>
+      (llm: ReturnType<typeof createLlm>, onUsage: (usage: UsageReport) => void) =>
         llm.write({ ...writeReq, onUsage }),
       okWrite,
     ],
@@ -328,8 +336,8 @@ describe('createAnthropicLlm 사용량 보고', () => {
     it(`${method}: 사용량은 네 항목 합`, async () => {
       const { client } = fakeClient(() => ({ ...ok(), usage: USAGE }));
       const reported: number[] = [];
-      await call(createAnthropicLlm(client), (tokens) => {
-        reported.push(tokens);
+      await call(createAnthropicLlm(client), (usage) => {
+        reported.push(usage.tokens);
       });
       assert.deepEqual(reported, [37]);
     });
@@ -340,8 +348,8 @@ describe('createAnthropicLlm 사용량 보고', () => {
         usage: { ...USAGE, cache_creation_input_tokens: null, cache_read_input_tokens: null },
       }));
       const reported: number[] = [];
-      await call(createAnthropicLlm(client), (tokens) => {
-        reported.push(tokens);
+      await call(createAnthropicLlm(client), (usage) => {
+        reported.push(usage.tokens);
       });
       assert.deepEqual(reported, [30]);
     });
@@ -351,8 +359,8 @@ describe('createAnthropicLlm 사용량 보고', () => {
         failThen([overloaded()], () => ({ ...ok(), usage: USAGE })),
       );
       const reported: number[] = [];
-      await call(createAnthropicLlm(client), (tokens) => {
-        reported.push(tokens);
+      await call(createAnthropicLlm(client), (usage) => {
+        reported.push(usage.tokens);
       });
       assert.equal(calls.length, 2);
       assert.deepEqual(reported, [37]);
@@ -362,8 +370,8 @@ describe('createAnthropicLlm 사용량 보고', () => {
       const { client } = fakeClient(() => ({ ...ok(), stop_reason: 'refusal', usage: USAGE }));
       const reported: number[] = [];
       await rejectsLlmFailed(
-        call(createAnthropicLlm(client), (tokens) => {
-          reported.push(tokens);
+        call(createAnthropicLlm(client), (usage) => {
+          reported.push(usage.tokens);
         }),
       );
       assert.deepEqual(reported, [37]);
@@ -394,8 +402,8 @@ describe('createAnthropicLlm 사용량 보고', () => {
       await rejectsLlmFailed(
         createAnthropicLlm(client).parse({
           ...parseReq,
-          onUsage: (tokens) => {
-            reported.push(tokens);
+          onUsage: (usage) => {
+            reported.push(usage.tokens);
           },
         }),
       );
@@ -403,4 +411,184 @@ describe('createAnthropicLlm 사용량 보고', () => {
       assert.equal(calls.length, 1);
     });
   }
+});
+
+describe('createAnthropicLlm 모델 선택과 거절 재시도', () => {
+  const OPUS_CALL: StageCall = { ...SONNET_CALL, model: 'opus' };
+  const NO_FALLBACK_SONNET: StageCall = { model: 'sonnet', effort: 'low', fallback: null };
+  // 입력 1,000 / 출력 500 / 캐시 없음
+  const SMALL = {
+    input_tokens: 1_000,
+    output_tokens: 500,
+    cache_creation_input_tokens: 0,
+    cache_read_input_tokens: 0,
+  };
+
+  const reports = () => {
+    const list: UsageReport[] = [];
+    return { list, onUsage: (usage: UsageReport) => void list.push(usage) };
+  };
+
+  // 호출 순서대로 응답을 돌려준다
+  // (Error 는 던진다)
+  const sequence = (replies: unknown[]) => {
+    let index = 0;
+    return () => {
+      const next = replies[index++];
+      if (next instanceof Error) throw next;
+      return next;
+    };
+  };
+
+  it('고른 모델 ID 로 호출한다', async () => {
+    for (const [model, id] of [
+      ['haiku', 'claude-haiku-5-5'],
+      ['sonnet', 'claude-sonnet-5-5'],
+      ['opus', 'claude-opus-5-5'],
+    ] as const) {
+      const { client, calls } = fakeClient(() => ({ ...okWrite(), usage: SMALL }));
+      await createAnthropicLlm(client).write({
+        ...writeReq,
+        call: { model, effort: 'high', fallback: null },
+      });
+      assert.equal(calls[0].req.model, id);
+      assert.equal(calls[0].req.output_config.effort, 'high');
+    }
+  });
+
+  it('응답마다 토큰과 비용을 함께 보고한다', async () => {
+    const { client } = fakeClient(() => ({ ...okWrite(), usage: SMALL }));
+    const { list, onUsage } = reports();
+
+    await createAnthropicLlm(client).write({ ...writeReq, call: SONNET_CALL, onUsage });
+
+    // sonnet: 1,000 × 2 + 500 × 10 = 7,000 마이크로달러 (입력 단가 2, 출력 단가 10 USD/MTok → 토큰당 마이크로달러)
+    assert.deepEqual(list, [{ tokens: 1_500, cost: 7_000 }]);
+  });
+
+  for (const [method, run] of [
+    [
+      'parse',
+      (llm: ReturnType<typeof createLlm>, call: StageCall, onUsage: (usage: UsageReport) => void) =>
+        llm.parse({ ...parseReq, call, onUsage }),
+    ],
+    [
+      'write',
+      (llm: ReturnType<typeof createLlm>, call: StageCall, onUsage: (usage: UsageReport) => void) =>
+        llm.write({ ...writeReq, call, onUsage }),
+    ],
+  ] as const) {
+    const ok = method === 'parse' ? okParse : okWrite;
+
+    it(`${method}: sonnet 이 거절하면 haiku 로 한 번 더 부르고, 두 호출을 각자 단가로 보고한다`, async () => {
+      const { client, calls } = fakeClient(
+        sequence([
+          { ...ok(), stop_reason: 'refusal', usage: SMALL },
+          { ...ok(), usage: SMALL },
+        ]),
+      );
+      const { list, onUsage } = reports();
+
+      await run(createAnthropicLlm(client), SONNET_CALL, onUsage);
+
+      assert.equal(calls.length, 2);
+      assert.equal(calls[0].req.model, 'claude-sonnet-5-5');
+      assert.equal(calls[0].req.output_config.effort, 'low');
+      assert.equal(calls[1].req.model, 'claude-haiku-5-5');
+      // 거절 재시도는 그 단계의 haiku 사고 깊이로 한다
+      assert.equal(calls[1].req.output_config.effort, 'medium');
+      // 요청 내용은 그대로
+      assert.equal(calls[1].req.system, calls[0].req.system);
+      assert.deepEqual(calls[1].req.messages, calls[0].req.messages);
+      assert.equal(calls[1].req.max_tokens, calls[0].req.max_tokens);
+      // sonnet 7,000 / haiku 1,000 × 0.1 + 500 × 0.5 = 350
+      assert.deepEqual(list, [
+        { tokens: 1_500, cost: 7_000 },
+        { tokens: 1_500, cost: 350 },
+      ]);
+    });
+
+    it(`${method}: haiku 재시도도 거절하면 llm_failed 이고 두 호출 사용량을 남긴다`, async () => {
+      const { client, calls } = fakeClient(
+        sequence([
+          { ...ok(), stop_reason: 'refusal', usage: SMALL },
+          { ...ok(), stop_reason: 'refusal', usage: SMALL },
+        ]),
+      );
+      const { list, onUsage } = reports();
+
+      await rejectsLlmFailed(run(createAnthropicLlm(client), SONNET_CALL, onUsage));
+
+      assert.equal(calls.length, 2);
+      assert.equal(list.length, 2);
+    });
+
+    it(`${method}: fallback 이 없는 호출의 거절은 바로 llm_failed`, async () => {
+      const { client, calls } = fakeClient(() => ({ ...ok(), stop_reason: 'refusal', usage: SMALL }));
+      const { list, onUsage } = reports();
+
+      await rejectsLlmFailed(run(createAnthropicLlm(client), NO_FALLBACK_SONNET, onUsage));
+      await rejectsLlmFailed(run(createAnthropicLlm(client), HAIKU_MEDIUM, onUsage));
+
+      assert.equal(calls.length, 2);
+      assert.equal(list.length, 2);
+    });
+
+    it(`${method}: 거절이 아니면 fallback 이 있어도 한 번만 부른다`, async () => {
+      const { client, calls } = fakeClient(() => ({ ...ok(), usage: SMALL }));
+
+      await run(createAnthropicLlm(client), SONNET_CALL, () => {});
+
+      assert.equal(calls.length, 1);
+    });
+
+    it(`${method}: 재시도 호출도 일시 오류를 호출마다 한 번씩 다시 시도한다`, async () => {
+      const { client, calls } = fakeClient(
+        sequence([
+          { ...ok(), stop_reason: 'refusal', usage: SMALL },
+          overloaded(),
+          { ...ok(), usage: SMALL },
+        ]),
+      );
+
+      await run(createAnthropicLlm(client), SONNET_CALL, () => {});
+
+      // sonnet, haiku(일시 오류), haiku(재시도)
+      assert.deepEqual(
+        calls.map(({ req }) => req.model),
+        ['claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-haiku-5-5'],
+      );
+    });
+  }
+
+  it('opus 호출의 기한은 opus 제한을 쓴다', async () => {
+    const { client, calls } = fakeClient(() => ({ ...okWrite(), usage: SMALL }));
+    const llm = createAnthropicLlm(client);
+
+    await llm.write({ ...writeReq, call: OPUS_CALL });
+    await llm.write({ ...writeReq, call: SONNET_CALL });
+    await llm.write(writeReq);
+
+    assert.deepEqual(
+      calls.map(({ options }) => options.timeout),
+      [
+        LLM_TIMEOUT_MS_BY_MODEL.opus,
+        LLM_TIMEOUT_MS_BY_MODEL.sonnet,
+        LLM_TIMEOUT_MS_BY_MODEL.haiku,
+      ],
+    );
+  });
+
+  it('남은 시간이 모델 제한보다 짧으면 줄인 기한을 쓰고, 재시도는 그 모델 제한만큼 남아야 한다', async () => {
+    const { client, calls } = fakeClient(failThen([overloaded()], () => ({ ...okWrite(), usage: SMALL })));
+    // haiku 제한은 채우지만 opus 제한(300초)에는 모자란 시간
+    const llm = createAnthropicLlm(client, {
+      remainingTimeMs: () => SAFETY_MARGIN_MS + LLM_TIMEOUT_MS_BY_MODEL.haiku + 1_000,
+    });
+
+    await rejectsLlmFailed(llm.write({ ...writeReq, call: OPUS_CALL }));
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].options.timeout, LLM_TIMEOUT_MS_BY_MODEL.haiku + 1_000);
+  });
 });

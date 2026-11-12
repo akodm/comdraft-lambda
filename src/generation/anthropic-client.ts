@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { oidcFederationProvider } from '@anthropic-ai/sdk/lib/credentials/oidc-federation';
 import type { FederationConfig } from '../config.ts';
-import { LLM_TIMEOUT_MS } from './llm.ts';
+import { LLM_TIMEOUT_MS_BY_MODEL } from './llm.ts';
 
 /**
  * Anthropic 클라이언트 (Workload Identity Federation)
@@ -56,7 +56,8 @@ export const createAnthropicClient = (
       baseURL: ANTHROPIC_BASE_URL,
       fetch,
     }),
-    timeout: LLM_TIMEOUT_MS,
+    // 호출마다 모델별 제한 시간을 따로 넘기므로, 기본값은 가장 긴 쪽으로 둔다
+    timeout: Math.max(...Object.values(LLM_TIMEOUT_MS_BY_MODEL)),
     // 재시도는 남은 실행 시간을 아는 createAnthropicLlm 이 직접 함
     maxRetries: 0,
   });
