@@ -4,6 +4,7 @@ import { GenerationFailure, toGenerationFailure } from './errors.ts';
 import type { BlankFiller } from './fill.ts';
 import { fetchCommits, type FetchCommit } from './github.ts';
 import type { JobContext, JobStore, QuotaReservation } from './jobs.ts';
+import type { UsageReport } from './generation/llm.ts';
 import type { Pipeline, PipelineInput } from './pipeline.ts';
 
 // 다음 단계를 시작하기 위해 남아 있어야 하는 실행 시간 (부족하면 스스로 실패 처리 후 종료)
@@ -90,7 +91,7 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
     return true;
   };
 
-  const onUsage = (tokens: number) => jobs.addUsage(jobId, tokens);
+  const onUsage = (usage: UsageReport) => jobs.addUsage(jobId, usage.tokens);
 
   // 빈칸 채우기: 결과 Markdown 문단
   const runFill = async (context: JobContext): Promise<string> => {
