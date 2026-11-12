@@ -1133,11 +1133,17 @@ describe('되묻기 판단과 작성자 맥락', () => {
       marker: '글의 방향이 갈릴 때만 묻는다',
       heading: '## 작성자가 보탠 맥락',
       resume: '## 되묻기\n이 작업은 이미 작성자에게 물었다. clarify.needed 는 false 로 두고 위 입력으로 기획한다.',
+      answerFocus: '요청이 비었거나 모호해도 답이 글의 중심이나 계기를 알려 주면 그 답으로 초점을 정한다.',
+      split: '서로 전혀 다른 글로 갈린다',
+      motiveOnly: '무슨 작업인지 분명하고 계기만 모르면 글이 갈리지 않는다. 계기는 분석 단계가 빈칸으로 묻는다.',
     },
     en: {
       marker: 'Ask only when the post could split into different posts',
       heading: '## Context the author added',
       resume: '## Clarifying questions\nThe author has already been asked about this job. Set clarify.needed to false and plan from the inputs above.',
+      answerFocus: 'Even if the request is empty or vague, when an answer tells the center or the motivation of the post, set the focus from that answer.',
+      split: 'the plan splits into entirely different posts',
+      motiveOnly: 'When it is clear what work was done and only the motivation is unknown, the post does not split; the analysis stage asks for the motivation as a blank.',
     },
   } as const;
 
@@ -1175,6 +1181,11 @@ describe('되묻기 판단과 작성자 맥락', () => {
       for (const stage of [pack.plan, pack.analyze, pack.write, pack.review, pack.revise]) {
         assert.ok(stage.system.includes('`<clarification>`'), `${pack.locale}: 입력 형식에 <clarification> 없음`);
       }
+      // 글이 "전혀" 다르게 갈릴 때만 묻고, 계기만 빠진 경우는 빈칸에 맡긴다 (스펙 5.1)
+      assert.ok(pack.plan.system.includes(phrase.split), `${pack.locale}: 전혀 다른 글`);
+      assert.ok(pack.plan.system.includes(phrase.motiveOnly), `${pack.locale}: 계기만 빠진 경우`);
+      // 요청이 비었거나 모호해도 다시 기획할 때 답으로 초점을 정한다
+      assert.ok(pack.plan.system.includes(phrase.answerFocus), `${pack.locale}: 답으로 초점`);
       // 데이터-지시 분리 규칙의 태그 목록에도 들어간다
       assert.ok(pack.fill.system.includes('`<clarification>`'), `${pack.locale}: 데이터 규칙 태그 목록`);
     });

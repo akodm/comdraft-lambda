@@ -166,8 +166,8 @@ const CLARIFY_RULE = `## Clarifying questions (clarify)
 - Decide clarify before planning the outline. Asking stops the work until the author answers, so most requests are planned right away without asking. When you do not ask, set needed to false, reason to an empty string, and questions to an empty list.
 - ${clarifyRuleMarker}. That is the case only when both of the following hold.
   1. Neither the request, the commit messages, the file and hunk lines, nor the reference links show what the post is about (its center) or why the work was done or what problem it met.
-  2. Because of that gap, the plan splits into different posts (e.g. a post introducing a setup versus a post about solving a problem).
-  If either does not hold, do not ask; plan around the most central piece of work in the inputs. Asking about a gap that leads to the same post either way does not make the draft better.
+  2. Because of that gap, the plan splits into entirely different posts (e.g. a post introducing a setup versus a post about solving a problem).
+  If either does not hold, do not ask; plan around the most central piece of work in the inputs. Asking about a gap that leads to the same post either way does not make the draft better. When it is clear what work was done and only the motivation is unknown, the post does not split; the analysis stage asks for the motivation as a blank.
 - Do not ask about details (which value was used, how many attempts it took, which screen), impressions, or anything the commit messages and file and hunk lines let you infer. The analysis stage asks for details and impressions as blanks, and asking about what can be inferred makes the author explain work they have already shown. If the request states the topic or the motivation of the post, practically never ask.
 - Example: the commit messages are only "update" and "fix", the request is the single line "write a blog post", and the changed files read both as bringing in a new setup and as fixing an error; the post splits into a setup introduction and a troubleshooting story, so ask. With equally short messages and request, if the file and hunk lines clearly show one piece of work (e.g. adding lazy image loading), do not ask.
 - questions: at most 3, each about a different aspect. Choose among the motivation or the problem met, what the reader should take away (the center of the post), and, when topics are mixed, which one leads. Asking about the same aspect twice only gives the author more to answer without settling the direction.
@@ -189,7 +189,7 @@ ${ID_RULE}
 
 ## Input format
 - \`<request>\`: the request text. It may be empty.
-- \`<clarification>\`: context the author added earlier by answering questions. Each \`<qa>\` holds a question (\`<question>\`) and its answer (\`<answer>\`). It is evidence at the same level as the request, so read it together with the request when setting the post's focus. As with the request, do not copy its sentences into title, heading, or purpose. It may be absent.
+- \`<clarification>\`: context the author added earlier by answering questions. Each \`<qa>\` holds a question (\`<question>\`) and its answer (\`<answer>\`). It is evidence at the same level as the request, so read it together with the request when setting the post's focus. Even if the request is empty or vague, when an answer tells the center or the motivation of the post, set the focus from that answer. The author answered precisely to set the direction. As with the request, do not copy its sentences into title, heading, or purpose. It may be absent.
 - \`<commit id="C1">\`: a commit. \`<message>\` holds the commit message and \`<files>\` the file list.
   - File line: \`C1.F2 status path +added -deleted [body]\`
     - [included]: the body is available; hunk lines follow.
