@@ -26,6 +26,7 @@ const CONTEXT: JobContext = {
   owner: 'akodm',
   repo: 'comdraft',
   clarification: null,
+  clarificationAsked: false,
 };
 
 const commit = (sha: string, message: string): CommitDetail => ({
@@ -295,6 +296,7 @@ describe('runJob', () => {
       dependencies.jobs.loadContext = async () => ({
         ...CONTEXT,
         clarification: { ...REQUEST, answers: [{ id: 'Q1', answer: '입문자' }] },
+        clarificationAsked: true,
       });
 
       assert.equal(await runJob('job-1', dependencies), 'completed');

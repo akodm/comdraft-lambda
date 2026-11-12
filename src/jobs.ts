@@ -59,6 +59,8 @@ export interface JobContext {
   blank?: JobBlank;
   // 작성 전 되묻기 (null 이면 아직 묻지 않은 작업)
   clarification: GenerationClarification | null;
+  // 되묻기 질문을 이미 저장했는지 (저장 값이 깨져 clarification 이 null 이어도 true, 다시 묻지 않는 기준)
+  clarificationAsked: boolean;
 }
 
 export interface JobStore {
@@ -152,6 +154,7 @@ const toContext = (row: ContextRow): JobContext => {
     referenceUrls: toUrlList(row.referenceUrls),
     ...(kind === 'fill' ? { blank: toBlank(row) } : {}),
     clarification: kind === 'draft' ? parseJobClarification(clarification) : null,
+    clarificationAsked: kind === 'draft' && row.clarificationAsked,
   };
 };
 
@@ -174,7 +177,7 @@ export const createJobStore = (sql: Database): JobStore => ({
         p.reference_urls as "referenceUrls",
         p.blank_id as "blankId", p.blank_question as "blankQuestion",
         p.blank_answer as "blankAnswer", p.blank_context as "blankContext",
-        p.clarification,
+        p.clarification, (p.clarification is not null) as "clarificationAsked",
         r.owner_login as owner, r.name as repo
       from comdraft.draft_prompt p
       join comdraft.draft d on d.id = p.draft_id

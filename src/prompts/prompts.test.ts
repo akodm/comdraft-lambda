@@ -43,6 +43,7 @@ const context = (overrides: Partial<JobContext> = {}): JobContext => ({
   owner: 'o',
   repo: 'r',
   clarification: null,
+  clarificationAsked: false,
   ...overrides,
 });
 
@@ -1162,7 +1163,7 @@ describe('되묻기 판단과 작성자 맥락', () => {
 
   // 기획·분석·작성·검토·고쳐 쓰기 user 프롬프트
   const userTexts = (pack: PromptPack, clarification: GenerationClarification | null) => {
-    const ctx = context({ locale: pack.locale, clarification });
+    const ctx = context({ locale: pack.locale, clarification, clarificationAsked: clarification !== null });
     return {
       plan: pack.plan.user({ context: ctx, commits, links: [link] }),
       analyze: pack.analyze.user({ context: ctx, plan, commits, hunks: [h1], links: [link] }),

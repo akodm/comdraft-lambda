@@ -190,7 +190,7 @@ export const createClaudePipeline = ({
 
     const first = await requestPlan();
     // 이미 물은 작업(답을 받아 다시 실행한 작업 포함)은 다시 묻지 않는다
-    const askable = context.clarification === null;
+    const askable = !context.clarificationAsked;
 
     // 묻기로 했으면 다시 기획하지 않고 바로 멈춘다 (필수 제목 수준은 답을 받은 뒤 실행에서 맞춘다)
     if (askable && first.clarify) {

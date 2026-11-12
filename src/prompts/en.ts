@@ -575,7 +575,7 @@ ${orNone(renderCatalog(commits))}
 
 ## Reference links
 ${orNone(renderLinks(links, { preview: true }))}
-${missingLevels?.length ? `\n${missingLevelsNote(missingLevels)}\n` : ''}${context.clarification ? `\n${CLARIFIED_NOTE}\n` : ''}
+${missingLevels?.length ? `\n${missingLevelsNote(missingLevels)}\n` : ''}${context.clarificationAsked ? `\n${CLARIFIED_NOTE}\n` : ''}
 Plan the outline of the post from the inputs above.`,
   },
   analyze: {
