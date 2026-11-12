@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { z } from 'zod';
 import type { CommitDetail } from './github.ts';
+import type { GenerationClarification } from './contract.ts';
 import type { JobContext } from './jobs.ts';
 import type { PreparedLink } from './generation/links.ts';
 import { estimateJobTokens } from './generation/estimate.ts';
@@ -305,6 +306,117 @@ describe('createClaudePipeline', () => {
       const present = fakeLlm(WITH_H3, ANALYSIS, MARKDOWN);
       await run(present.llm, { context: H3_CONTEXT });
       assert.equal(present.parses.length, 3);
+    });
+  });
+
+  describe('되묻기', () => {
+    const ASKING: RawPlan = {
+      ...PLAN,
+      clarify: {
+        needed: true,
+        reason: '독자가 갈린다',
+        questions: [{ question: '누구를 위한 글인가요?', options: ['입문자', '실무자'] }],
+      },
+    };
+    const H3_CONTEXT = { requiredBlocks: ['h2', 'h3'] };
+    const WITH_H3: RawPlan = {
+      ...PLAN,
+      sections: [PLAN.sections[0], { level: 3, heading: '세부', purpose: '나눔', hunks: [], links: [] }],
+    };
+    const answered: GenerationClarification = {
+      reason: '독자가 갈린다',
+      questions: [{ id: 'Q1', question: '누구를 위한 글인가요?', options: ['입문자', '실무자'] }],
+      answers: [{ id: 'Q1', answer: '입문자 대상으로 써 주세요' }],
+    };
+    const asked: GenerationClarification = { ...answered, answers: null };
+
+    // 기획 단계까지만 실행한다
+    const classifyOnly = async (llm: LlmClient, context: Partial<JobContext> = {}) => {
+      const pipeline = createClaudePipeline({
+        llm,
+        fetchLinks: async () => LINKS,
+        remainingTimeMs: () => 300_000,
+      });
+      const input: PipelineInput = {
+        context: { ...CONTEXT, ...context },
+        commits: COMMITS,
+        onUsage: async () => {},
+      };
+      const prepared = await pipeline.prepare(input);
+      const classified = await pipeline.classify(input, prepared);
+      return { pipeline, classified };
+    };
+
+    it('처음 실행에서 기획이 묻기로 하면 다시 기획하지 않고 clarify 를 돌려준다', async () => {
+      // 필수 h3 이 빠졌어도 묻기가 먼저다
+      const { llm, parses } = fakeLlm(ASKING, ANALYSIS, MARKDOWN, { replan: WITH_H3 });
+      const { pipeline, classified } = await classifyOnly(llm, H3_CONTEXT);
+
+      assert.equal(parses.length, 1);
+      assert.deepEqual(pipeline.clarification(classified), {
+        reason: '독자가 갈린다',
+        questions: [{ id: 'Q1', question: '누구를 위한 글인가요?', options: ['입문자', '실무자'] }],
+      });
+    });
+
+    it('묻지 않기로 한 기획은 clarification 이 null 이다', async () => {
+      const { llm } = fakeLlm(PLAN, ANALYSIS, MARKDOWN);
+      const { pipeline, classified } = await classifyOnly(llm);
+
+      assert.equal(pipeline.clarification(classified), null);
+    });
+
+    it('이미 물은 작업은 기획이 묻기로 해도 무시한다', async () => {
+      for (const clarification of [asked, answered, { ...asked, answers: 'skipped' as const }]) {
+        const { llm, parses } = fakeLlm(ASKING, ANALYSIS, MARKDOWN);
+        const { pipeline, classified } = await classifyOnly(llm, { clarification });
+
+        assert.equal(parses.length, 1);
+        assert.equal(classified.plan.clarify, null);
+        assert.equal(pipeline.clarification(classified), null);
+      }
+    });
+
+    it('이미 물은 작업은 필수 제목이 빠지면 기존처럼 다시 기획한다', async () => {
+      const { llm, parses } = fakeLlm(ASKING, ANALYSIS, MARKDOWN, { replan: WITH_H3 });
+      const { classified } = await classifyOnly(llm, { ...H3_CONTEXT, clarification: answered });
+
+      assert.equal(parses.length, 2);
+      assert.deepEqual(classified.plan.sections.map((section) => section.level), [2, 3]);
+    });
+
+    it('다시 기획한 결과의 clarify 는 무시한다', async () => {
+      // 처음 기획은 묻지 않지만 h3 이 빠져 다시 기획했고, 그 기획이 묻기로 했다
+      const { llm, parses } = fakeLlm(PLAN, ANALYSIS, MARKDOWN, { replan: { ...WITH_H3, clarify: ASKING.clarify } });
+      const { pipeline, classified } = await classifyOnly(llm, H3_CONTEXT);
+
+      assert.equal(parses.length, 2);
+      assert.deepEqual(classified.plan.sections.map((section) => section.level), [2, 3]);
+      assert.equal(classified.plan.clarify, null);
+      assert.equal(pipeline.clarification(classified), null);
+    });
+
+    it('답한 맥락이 기획·분석·작성·검토 입력에 들어간다', async () => {
+      const { llm, parses, writes } = fakeLlm(PLAN, ANALYSIS, MARKDOWN, { review: { issues: [] } });
+      await run(llm, { context: { clarification: answered } });
+
+      for (const call of [...parses, writes[0]]) {
+        assert.ok(call.user.includes('<clarification>'));
+        assert.ok(call.user.includes('입문자 대상으로 써 주세요'));
+      }
+    });
+
+    it('예상량에 답 길이가 들어간다', async () => {
+      const plain = await prepareOnly();
+      const withAnswer = await prepareOnly({ context: { clarification: answered } });
+      const longAnswer = await prepareOnly({
+        context: {
+          clarification: { ...answered, answers: [{ id: 'Q1', answer: '긴 답변 '.repeat(200) }] },
+        },
+      });
+
+      assert.ok(withAnswer.estimate > plain.estimate);
+      assert.ok(longAnswer.estimate > withAnswer.estimate);
     });
   });
 

@@ -22,8 +22,12 @@ export interface RunJobDependencies<P = unknown, C = unknown, A = unknown, W = u
   reportError?: (error: unknown) => void;
 }
 
-// skipped: 이미 시작했거나 끝난 작업 (중복 호출), cancelled: 진행 중 다른 곳에서 끝남 (시간 초과 등)
-export type RunJobOutcome = 'completed' | 'failed' | 'skipped' | 'cancelled';
+// skipped: 이미 시작했거나 끝난 작업 (중복 호출), cancelled: 진행 중 다른 곳에서 끝남 (시간 초과 등),
+// awaiting_input: 작성 전 되묻기 질문을 저장하고 답을 기다리며 멈춤 (끝난 것이 아니라 답을 받으면 다시 실행됨)
+export type RunJobOutcome = 'completed' | 'failed' | 'skipped' | 'cancelled' | 'awaiting_input';
+
+// 작업 실행 결과: 결과 Markdown, 또는 되묻기로 멈춤 (null 은 중간에 다른 곳에서 끝남)
+type DraftRun = { kind: 'result'; markdown: string } | { kind: 'paused' };
 
 // 예상량 기록 결과 → 시작할 수 없으면 실패 (초과는 예상량이 이미 기록됐으므로 반드시 실패로 끝내야 한다,
 // quota_exceeded 는 사용량 0 으로 셈)
@@ -39,6 +43,8 @@ const assertReserved = (reservation: QuotaReservation) => {
 
 /**
  * 작업 한 건 실행: running → 커밋 상세 1회 조회 → 준비 → 예상량 검사 → 구분(1) → 분석(2) → 작성·검토 → 완료(3)
+ * - 구분 직후 기획이 작성자에게 물어야 한다고 하면(처음 실행만) 질문을 저장하고 답변 대기(awaiting_input)로 멈춘다
+ *   (단계는 0 그대로, 완료·실패 처리 없음, 답을 받으면 Next.js 가 다시 대기열에 넣어 처음부터 다시 실행)
  * - 예상량이 남은 할당량을 넘으면 Claude 를 부르지 않고 quota_exceeded 로 실패 (사용량은 0 으로 셈)
  * - Claude 응답을 받을 때마다 사용 토큰을 바로 누적 (뒤 단계가 실패해도 쓴 만큼은 남음)
  * - 단계를 마칠 때마다 DB 단계를 갱신하고 Realtime 신호 전송
@@ -104,8 +110,8 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
     return filler.fill(input);
   };
 
-  // 초안 작성: 구분 → 분석 → 작성 → 검토 (중간에 다른 곳에서 끝났으면 null)
-  const runDraft = async (context: JobContext): Promise<string | null> => {
+  // 초안 작성: 구분 → (되묻기면 멈춤) → 분석 → 작성 → 검토 (중간에 다른 곳에서 끝났으면 null)
+  const runDraft = async (context: JobContext): Promise<DraftRun | null> => {
     const input: PipelineInput = {
       context,
       commits: await fetchCommits(fetchCommit, {
@@ -133,6 +139,11 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
     // 준비 단계에서 참고 링크를 가져오느라 시간을 썼을 수 있어 다시 확인
     ensureTime();
     const classified = await pipeline.classify(input, prepared);
+    const clarify = pipeline.clarification(classified);
+
+    if (clarify) {
+      return (await jobs.pauseForInput(jobId, clarify)) ? { kind: 'paused' } : null;
+    }
 
     if (!(await advance(1))) {
       return null;
@@ -148,7 +159,7 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
     ensureTime();
     const written = await pipeline.write(input, analyzed);
     // 검토는 시간이 부족하면 스스로 건너뛰므로 앞에서 따로 확인하지 않는다 (단계 표시도 완료 전까지 2 유지)
-    return pipeline.review(input, written);
+    return { kind: 'result', markdown: await pipeline.review(input, written) };
   };
 
   await notify('running');
@@ -160,12 +171,21 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
       throw new GenerationFailure('internal');
     }
 
-    const result =
-      context.kind === 'fill' ? await runFill(context) : await runDraft(context);
+    const run: DraftRun | null =
+      context.kind === 'fill'
+        ? { kind: 'result', markdown: await runFill(context) }
+        : await runDraft(context);
 
-    if (result === null) {
+    if (run === null) {
       return 'cancelled';
     }
+
+    if (run.kind === 'paused') {
+      await notify('awaiting_input');
+      return 'awaiting_input';
+    }
+
+    const result = run.markdown;
 
     if (!result.trim()) {
       throw new GenerationFailure('invalid_result');

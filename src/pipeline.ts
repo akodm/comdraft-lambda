@@ -30,12 +30,13 @@ import {
   AnalysisSchema,
   PlanSchema,
   type Analysis,
+  type ClarifyRequest,
   type Plan,
 } from './generation/schemas.ts';
 import { toStoredAnalysis, type StoredAnalysis } from './generation/stored-analysis.ts';
 import { missingHeadingLevels, validateAnalysis, validatePlan } from './generation/validate.ts';
 import { getPromptPack } from './prompts/index.ts';
-import { renderCatalog, resolveOptions } from './prompts/render.ts';
+import { renderCatalog, renderClarification, resolveOptions } from './prompts/render.ts';
 
 /**
  * 준비 → (예상량 검사) → 구분 → 분석 → 작성 → 검토 단계
@@ -61,6 +62,8 @@ export interface Pipeline<P = unknown, C = unknown, A = unknown, W = unknown> {
   estimate: (input: PipelineInput, prepared: P) => number;
   // 1단계: 커밋을 주제/작업 단위로 구분
   classify: (input: PipelineInput, prepared: P) => Promise<C>;
+  // 구분 결과가 작성 전에 작성자에게 물어야 한다고 하면 그 질문 (없으면 null, 이미 물은 작업은 항상 null)
+  clarification: (classified: C) => ClarifyRequest | null;
   // 2단계: 구분 결과를 바탕으로 변경 내용 분석
   analyze: (input: PipelineInput, classified: C) => Promise<A>;
   // 3단계: 분석 결과로 글 초안(Markdown, 자리표시자 형태) 작성
@@ -134,7 +137,8 @@ const estimatePrepared = (context: JobContext, { commits, hunks, links }: Prepar
         [...hunks.values()].filter((hunk) => !hunk.redacted).map((hunk) => hunk.lines.join('\n')),
       ),
       linkTokens: sum(links.map((link) => link.text)),
-      requestTokens: estimateTokens(context.prompt),
+      requestTokens:
+        estimateTokens(context.prompt) + estimateTokens(renderClarification(context.clarification)),
     },
     resolveOptions(context).length,
     {
@@ -184,7 +188,16 @@ export const createClaudePipeline = ({
         planContext,
       );
 
-    const plan = await requestPlan();
+    const first = await requestPlan();
+    // 이미 물은 작업(답을 받아 다시 실행한 작업 포함)은 다시 묻지 않는다
+    const askable = context.clarification === null;
+
+    // 묻기로 했으면 다시 기획하지 않고 바로 멈춘다 (필수 제목 수준은 답을 받은 뒤 실행에서 맞춘다)
+    if (askable && first.clarify) {
+      return { ...prepared, plan: first };
+    }
+
+    const plan = askable ? first : { ...first, clarify: null };
     const missing = missingHeadingLevels(plan, requiredBlocks);
 
     if (missing.length === 0) {
@@ -192,12 +205,15 @@ export const createClaudePipeline = ({
     }
 
     // 필수 제목 수준이 빠졌으면 빠진 수준을 알려 주고 한 번만 다시 기획한다 (덜 빠진 쪽을 쓴다)
-    const replanned = await requestPlan(missing);
+    // 다시 기획한 결과의 되묻기는 쓰지 않는다
+    const replanned = { ...(await requestPlan(missing)), clarify: null };
     const better =
       missingHeadingLevels(replanned, requiredBlocks).length < missing.length ? replanned : plan;
 
     return { ...prepared, plan: better };
   },
+
+  clarification: ({ plan }) => plan.clarify,
 
   analyze: async ({ context, onUsage, onAnalysis }, classified) => {
     const pack = getPromptPack(context.locale);

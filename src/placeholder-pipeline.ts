@@ -20,6 +20,7 @@ export const createPlaceholderPipeline = (): Pipeline => ({
   prepare: async () => ({}),
   estimate: () => 0,
   classify: async ({ commits }) => commits.map(({ sha }) => sha),
+  clarification: () => null,
   analyze: async (_input, classified) => classified,
   write: async ({ context, commits }) => {
     const ordered = [...commits].reverse();
