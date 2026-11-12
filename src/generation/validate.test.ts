@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import type { PreparedHunk } from './prepare.ts';
-import { AnalysisSchema, BLANK_LIMIT, type Analysis, type BlankKind, type Plan } from './schemas.ts';
+import { AnalysisSchema, BLANK_LIMIT, type Analysis, type BlankKind, type Plan, type RawPlan } from './schemas.ts';
 import { missingHeadingLevels, sanitizeHint, validateAnalysis, validatePlan } from './validate.ts';
 
 const section = (level: number, extra: Partial<Plan['sections'][number]> = {}) => ({
@@ -20,6 +20,13 @@ const plan = (sections: Plan['sections']): Plan => ({
   sections,
   excludedCommits: [],
   linkRoles: [],
+  clarify: null,
+});
+
+// 모델이 돌려준 그대로의 기획 (되묻기 판단은 묻지 않음)
+const rawPlan = (sections: Plan['sections']): RawPlan => ({
+  ...plan(sections),
+  clarify: { needed: false, reason: '', questions: [] },
 });
 
 const hunk = (id: string, count: number, redacted = false): PreparedHunk => ({
@@ -55,6 +62,7 @@ describe('missingHeadingLevels', () => {
     sections: levels.map((level, i) => ({ level, heading: `h${i}`, purpose: 'p', hunks: [], links: [] })),
     excludedCommits: [],
     linkRoles: [],
+    clarify: null,
   });
 
   it('필수 블록의 제목 수준(h2~h6) 중 기획에 없는 수준을 작은 것부터 돌려준다', () => {
@@ -76,7 +84,7 @@ describe('validatePlan', () => {
 
   it('linkRoles 는 모르는·중복 번호를 버리고 빠진 링크를 other 로 채워 입력 링크 순서로 둔다', () => {
     const raw = {
-      ...plan([]),
+      ...rawPlan([]),
       linkRoles: [
         { id: 'L2', role: 'docs', relation: '설정 절차를 따른다' },
         { id: 'L9', role: 'docs', relation: '없는 링크' },
@@ -92,13 +100,25 @@ describe('validatePlan', () => {
     ]);
   });
 
+  it('validatePlan 은 clarify 를 보정해 넣는다', () => {
+    const raw = {
+      ...rawPlan([]),
+      clarify: { needed: true, reason: ' 방향 ', questions: [{ question: ' 누구용? ', options: ['a'] }] },
+    };
+    assert.deepEqual(validatePlan(raw, ctxLinks([])).clarify, {
+      reason: '방향',
+      questions: [{ id: 'Q1', question: '누구용?', options: [] }],
+    });
+    assert.equal(validatePlan({ ...raw, clarify: { needed: false, reason: '', questions: [] } }, ctxLinks([])).clarify, null);
+  });
+
   it('링크가 없으면 linkRoles 는 빈 목록이다', () => {
-    const raw = { ...plan([]), linkRoles: [{ id: 'L1', role: 'docs', relation: 'x' }] };
+    const raw = { ...rawPlan([]), linkRoles: [{ id: 'L1', role: 'docs', relation: 'x' }] };
     assert.deepEqual(validatePlan(raw, ctxLinks([])).linkRoles, []);
   });
 
   it('없는 hunk·link 를 빼고 절 수를 길이 범위로 자르고 level 건너뜀을 고친다', () => {
-    const input = plan([
+    const input = rawPlan([
       section(2, { hunks: ['C1.F1.H1', 'C9.F1.H1'], links: ['L1', 'L7'] }),
       section(4),
       section(3),
@@ -118,11 +138,11 @@ describe('validatePlan', () => {
   });
 
   it('알 수 없는 length 는 medium 범위, 첫 절 level 은 2..6 으로 맞춘다', () => {
-    const many = plan(Array.from({ length: 7 }, () => section(1)));
+    const many = rawPlan(Array.from({ length: 7 }, () => section(1)));
     const out = validatePlan(many, { hunkIds: new Set(), linkIds: new Set(), length: 'x' });
     assert.equal(out.sections.length, 5);
     assert.equal(out.sections[0].level, 2);
-    const few = validatePlan(plan([section(9)]), {
+    const few = validatePlan(rawPlan([section(9)]), {
       hunkIds: new Set(),
       linkIds: new Set(),
       length: 'long',
@@ -134,7 +154,7 @@ describe('validatePlan', () => {
 
   it('첫 절이 h2 보다 깊으면 모든 절을 같은 만큼 올려 상대 구조를 지킨다', () => {
     // 실제 비교 실행: 필수 블록 h4 를 고르자 기획이 모든 절을 h4 로 잡아 h1 다음에 바로 h4 가 나왔다
-    const deep = validatePlan(plan([section(4), section(4), section(5)]), {
+    const deep = validatePlan(rawPlan([section(4), section(4), section(5)]), {
       hunkIds: new Set(),
       linkIds: new Set(),
       length: 'medium',

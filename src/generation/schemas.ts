@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import type { GenerationClarificationQuestion } from '../contract.ts';
+
 // 빈칸 종류. comdraft 저장소의 목록과 똑같이 유지한다. 기본값은 detail.
 export const BLANK_KINDS = ['motivation', 'result', 'lesson', 'detail'] as const;
 export type BlankKind = (typeof BLANK_KINDS)[number];
@@ -33,6 +35,12 @@ export type LinkRole = (typeof LINK_ROLES)[number];
 export const LINK_RELATION_MAX = 120;
 
 export const PlanSchema = z.object({
+  // 글의 방향이 갈릴 때 작성자에게 먼저 묻는다. 묻지 않으면 needed 를 false 로 두고 나머지는 비운다
+  clarify: z.object({
+    needed: z.boolean(),
+    reason: z.string(),
+    questions: z.array(z.object({ question: z.string(), options: z.array(z.string()) })),
+  }),
   title: z.string(),
   takeaway: z.string(),
   sections: z.array(
@@ -90,8 +98,17 @@ export interface LinkRoleEntry {
   relation: string;
 }
 
-// 검증을 거친 기획 (linkRoles 는 입력 링크마다 하나씩, role 은 목록 안의 값)
-export type Plan = Omit<RawPlan, 'linkRoles'> & { linkRoles: LinkRoleEntry[] };
+// 검증을 거친 되묻기 (질문에 id 가 붙고 한도에 맞게 보정됨)
+export interface ClarifyRequest {
+  reason: string;
+  questions: GenerationClarificationQuestion[];
+}
+
+// 검증을 거친 기획 (linkRoles 는 입력 링크마다 하나씩, role 은 목록 안의 값, clarify 는 묻지 않으면 null)
+export type Plan = Omit<RawPlan, 'linkRoles' | 'clarify'> & {
+  linkRoles: LinkRoleEntry[];
+  clarify: ClarifyRequest | null;
+};
 // 모델이 돌려준 그대로의 분석 결과 (mode·kind 가 목록 밖일 수 있음)
 export type RawAnalysis = z.infer<typeof AnalysisSchema>;
 

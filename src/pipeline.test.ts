@@ -8,7 +8,7 @@ import { estimateJobTokens } from './generation/estimate.ts';
 import { estimateTokens, REVIEW_MIN_REMAINING_MS, REVISE_MIN_REMAINING_MS } from './generation/limits.ts';
 import { GenerationFailure } from './errors.ts';
 import type { Effort, LlmClient } from './generation/llm.ts';
-import type { Analysis, Plan } from './generation/schemas.ts';
+import type { Analysis, RawPlan } from './generation/schemas.ts';
 import type { StoredAnalysis } from './generation/stored-analysis.ts';
 import {
   createClaudePipeline,
@@ -53,7 +53,7 @@ const LINKS: PreparedLink[] = [
   { id: 'L1', url: 'https://example.com/post', title: '참고 글', text: 'lazy loading notes' },
 ];
 
-const PLAN: Plan = {
+const PLAN: RawPlan = {
   title: '지연 로딩',
   takeaway: '이미지를 늦게 불러온다',
   sections: [
@@ -61,6 +61,7 @@ const PLAN: Plan = {
   ],
   excludedCommits: [],
   linkRoles: [],
+  clarify: { needed: false, reason: '', questions: [] },
 };
 
 const ANALYSIS: Analysis = {
@@ -101,7 +102,7 @@ const NO_ISSUES = { issues: [] };
 // parse 응답은 호출 순서대로 (기획, 분석, 검토), write 응답도 (작성, 고쳐 쓰기)
 // 검토 응답을 따로 주지 않으면 문제 없음으로 답한다
 const fakeLlm = (
-  plan: Plan,
+  plan: RawPlan,
   analysis: Analysis,
   markdown: string,
   // replan: 필수 제목 수준이 빠져 다시 기획한 결과 / retried: 고쳐 쓴 초안이 거절됐을 때 다시 고쳐 쓴 결과 (없으면 revised 와 같음)
@@ -270,7 +271,7 @@ describe('createClaudePipeline', () => {
 
   describe('필수 제목 수준', () => {
     const H3_CONTEXT = { requiredBlocks: ['h2', 'h3'] };
-    const WITH_H3: Plan = {
+    const WITH_H3: RawPlan = {
       ...PLAN,
       sections: [PLAN.sections[0], { level: 3, heading: '세부', purpose: '나눔', hunks: [], links: [] }],
     };
@@ -328,7 +329,7 @@ describe('createClaudePipeline', () => {
         files: [{ filename: 'pnpm-lock.yaml', status: 'modified', additions: 5, deletions: 5, patch: PATCH }],
       },
     ];
-    const plan: Plan = {
+    const plan: RawPlan = {
       ...PLAN,
       sections: [{ level: 2, heading: '정리', purpose: '의존성', hunks: [], links: [] }],
     };
