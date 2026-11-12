@@ -29,6 +29,7 @@ const CONTEXT: JobContext = {
   commitShas: [],
   owner: 'o',
   repo: 'r',
+  clarification: null,
   blank: BLANK,
 };
 

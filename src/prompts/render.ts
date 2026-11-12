@@ -1,4 +1,6 @@
+import type { GenerationClarification } from '../contract.ts';
 import type { JobContext } from '../jobs.ts';
+import { answeredPairs } from '../generation/clarify.ts';
 import type { PreparedLink } from '../generation/links.ts';
 import { estimateTokens, LINK_PREVIEW_CHARS, PLAN_CATALOG_TOKENS } from '../generation/limits.ts';
 import type { PreparedCommit, PreparedFile, PreparedHunk } from '../generation/prepare.ts';
@@ -28,7 +30,7 @@ const TAGS = [
   'request', 'commit', 'message', 'files', 'hunk', 'link', 'links', 'title', 'text', 'plan',
   'section', 'heading', 'purpose', 'hunks', 'takeaway', 'outline', 'fact', 'code', 'point',
   'source', 'blank', 'context', 'analysis', 'question', 'answer', 'draft', 'issues', 'issue',
-  'quote', 'fix',
+  'quote', 'fix', 'clarification', 'qa',
 ] as const;
 type Tag = (typeof TAGS)[number];
 
@@ -73,6 +75,25 @@ export const resolveOptions = (context: JobContext): ResolvedOptions => ({
 });
 
 export const tagRequest = (text: string): string => element('request', {}, escapeTagText(text));
+
+// 작성자가 되묻기 질문에 답한 쌍 (질문 순서대로). 답한 쌍이 없으면(처음 실행, 그냥 작성) 빈 문자열
+export const renderClarification = (clarification: GenerationClarification | null): string => {
+  const pairs = answeredPairs(clarification);
+  if (pairs.length === 0) return '';
+  return element(
+    'clarification',
+    {},
+    pairs
+      .map((pair) =>
+        element(
+          'qa',
+          { id: pair.id },
+          [inline('question', {}, pair.question), inline('answer', {}, pair.answer)].join('\n'),
+        ),
+      )
+      .join('\n'),
+  );
+};
 
 // ---- 기획 단계: 커밋 카탈로그 ----
 
