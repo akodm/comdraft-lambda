@@ -18,6 +18,23 @@ export type GenerationJobKind = 'draft' | 'fill';
 // (comdraft lib/generation/blank-fill.ts 의 FILL_TARGET_MARKER 와 같은 값)
 export const FILL_TARGET_MARKER = '{{target}}';
 
+// 작성에 쓰는 모델 (draft_prompt.model, 기본값 haiku)
+export const GENERATION_MODELS = ['haiku', 'sonnet', 'opus'] as const;
+export type GenerationModel = (typeof GENERATION_MODELS)[number];
+
+// 모델별 Anthropic 모델 ID
+export const GENERATION_MODEL_IDS: Record<GenerationModel, string> = {
+  haiku: 'claude-haiku-5-5',
+  sonnet: 'claude-sonnet-5-5',
+  opus: 'claude-opus-5-5',
+};
+
+export const isGenerationModel = (value: unknown): value is GenerationModel =>
+  GENERATION_MODELS.some((model) => model === value);
+
+// Lambda 전체 제한 시간 (terraform lambda_timeout_seconds 720초와 같게 유지)
+export const GENERATION_LAMBDA_TIMEOUT_MS = 12 * 60 * 1000;
+
 // API Gateway → Lambda 요청 본문. 나머지 값은 jobId 로 DB 에서 읽음
 export interface GenerationRequest {
   jobId: string;
