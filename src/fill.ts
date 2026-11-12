@@ -1,5 +1,5 @@
 import { sanitizeFill } from './generation/assemble.ts';
-import { estimateFillTokens } from './generation/estimate.ts';
+import { estimateFillCost } from './generation/estimate.ts';
 import { estimateTokens } from './generation/limits.ts';
 import type { LlmClient, OnUsage } from './generation/llm.ts';
 import { stagePlan } from './generation/models.ts';
@@ -23,14 +23,14 @@ export interface FillInput {
 }
 
 export interface BlankFiller {
-  // 할당량 검사용 예상량 (Claude 를 부르지 않음)
+  // 할당량 검사용 비용 예상량 (마이크로달러, Claude 를 부르지 않음)
   estimate: (input: FillInput) => number;
   // Claude 한 번 호출 → 정리한 Markdown 문단
   fill: (input: FillInput) => Promise<string>;
 }
 
-// 다듬기는 짧은 글이라 사고 깊이를 낮게, 출력 상한은 사고 토큰을 감안해 넉넉하게
-export const FILL_STAGE = { call: stagePlan('haiku', 'fill'), maxTokens: 8_000 };
+// 다듬기는 짧은 글이라 출력 상한만 사고 토큰을 감안해 넉넉하게 (모델·사고 깊이는 작업 모델로 stagePlan 이 정함)
+export const FILL_MAX_TOKENS = 8_000;
 
 const buildPrompt = ({ context, blank, analysis }: FillInput) => {
   const pack = getPromptPack(context.locale);
@@ -53,14 +53,18 @@ const evidenceOf = ({ blank, analysis }: FillInput): string =>
 export const createClaudeFiller = ({ llm }: { llm: LlmClient }): BlankFiller => ({
   estimate: (input) => {
     const { system, user } = buildPrompt(input);
-    return estimateFillTokens({ system: estimateTokens(system), user: estimateTokens(user) });
+    return estimateFillCost(
+      { system: estimateTokens(system), user: estimateTokens(user) },
+      input.context.model,
+    );
   },
 
   fill: async (input) => {
     const markdown = await llm.write({
       ...buildPrompt(input),
       onUsage: input.onUsage,
-      ...FILL_STAGE,
+      call: stagePlan(input.context.model, 'fill'),
+      maxTokens: FILL_MAX_TOKENS,
     });
 
     return sanitizeFill(markdown, evidenceOf(input));

@@ -1,4 +1,6 @@
+import type { GenerationModel } from '../contract.ts';
 import type { Length } from '../prompts/types.ts';
+import { LLM_TIMEOUT_MS_BY_MODEL, SAFETY_MARGIN_MS } from './llm.ts';
 
 // 커밋 메시지 한 개에서 넣는 최대 글자 수
 export const MAX_MESSAGE_CHARS = 1_000;
@@ -64,7 +66,9 @@ export const MAX_REVIEW_ISSUES = 8;
 export const REVIEW_FIX_MAX = 150;
 // 검토 프롬프트가 안내하는 quote 최대 글자 수 (검증은 초안에 있는지만 본다)
 export const REVIEW_QUOTE_MAX = 200;
-// 남은 시간이 이보다 적으면 검토를 건너뛴다 (검토는 출력이 짧아 호출 제한보다 짧게 잡는다)
-export const REVIEW_MIN_REMAINING_MS = 120_000;
-// 고쳐 쓰기 한 번 = 호출 하나의 제한(180초) + 저장 여유(15초)
-export const REVISE_MIN_REMAINING_MS = 195_000;
+// 남은 시간이 이보다 적으면 검토를 건너뛴다 (검토는 출력이 짧아 호출 제한의 2/3 로 잡는다, haiku 180초 → 120초)
+export const reviewMinRemainingMs = (model: GenerationModel): number =>
+  Math.round((LLM_TIMEOUT_MS_BY_MODEL[model] * 2) / 3);
+// 고쳐 쓰기 한 번 = 호출 하나의 제한(haiku 180초) + 저장 여유(15초)
+export const reviseMinRemainingMs = (model: GenerationModel): number =>
+  LLM_TIMEOUT_MS_BY_MODEL[model] + SAFETY_MARGIN_MS;

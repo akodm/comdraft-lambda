@@ -38,6 +38,7 @@ const context = (overrides: Partial<JobContext> = {}): JobContext => ({
   length: 'medium',
   requiredBlocks: ['h2', 'list', 'code'],
   locale: 'ko',
+  model: 'haiku',
   referenceUrls: [],
   commitShas: ['a'],
   owner: 'o',

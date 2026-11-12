@@ -21,6 +21,7 @@ const CONTEXT: JobContext = {
   length: 'medium',
   requiredBlocks: [],
   locale: 'ko',
+  model: 'haiku',
   referenceUrls: [],
   commitShas: ['b74e3d0aaaa', 'a8f2c91bbbb'],
   owner: 'akodm',
@@ -46,8 +47,9 @@ const createMemoryJobs = (
     step: 0,
     result: null as string | null,
     errorCode: null as string | null,
-    estimatedTokens: null as number | null,
+    estimatedCost: null as number | null,
     usedTokens: 0,
+    usedCost: 0,
     analysis: null as StoredAnalysis | null,
     // 같은 초안의 최근 완료 초안 작성 작업이 저장한 분석 (loadLatestAnalysis 가 돌려줌)
     latestAnalysis: null as StoredAnalysis | null,
@@ -92,14 +94,15 @@ const createMemoryJobs = (
     // 실제 저장소처럼 초과여도 예상량은 기록한다 (거부 처리는 실패 기록에 맡김)
     reserveQuota: async (_jobId, estimate) => {
       if (reservation !== 'no_plan') {
-        state.estimatedTokens = estimate;
+        state.estimatedCost = estimate;
       }
 
       return reservation;
     },
-    addUsage: async (_jobId, tokens) => {
-      if (tokens > 0) {
+    addUsage: async (_jobId, { tokens, cost }) => {
+      if (tokens > 0 || cost > 0) {
         state.usedTokens += tokens;
+        state.usedCost += cost;
       }
     },
     saveAnalysis: async (_jobId, analysis) => {
@@ -116,7 +119,7 @@ const createMemoryJobs = (
       Object.assign(state, {
         status: 'awaiting_input',
         clarification: { ...request, answers: null },
-        estimatedTokens: null,
+        estimatedCost: null,
       });
       return true;
     },
@@ -244,9 +247,15 @@ describe('runJob', () => {
     };
     const USAGE = { classify: 1_000, analyze: 2_000, write: 3_000 };
 
-    it('기획이 묻기로 하면 질문을 저장하고 답변 대기로 끝낸다', async () => {
+    it('기획이 묻기로 하면 질문을 저장하고 답변 대기로 끝내며 예상 비용도 비운다', async () => {
       const { pipeline, stages } = createUsagePipeline(USAGE, undefined, REQUEST);
       const { dependencies, state, signals, pauseCalls } = createDependencies({ pipeline });
+      let reserved: number | null = null;
+      const reserve = dependencies.jobs.reserveQuota;
+      dependencies.jobs.reserveQuota = async (jobId, estimateCost) => {
+        reserved = estimateCost;
+        return reserve(jobId, estimateCost);
+      };
       const steps: number[] = [];
       const markStep = dependencies.jobs.markStep;
       dependencies.jobs.markStep = async (jobId, step) => {
@@ -264,7 +273,9 @@ describe('runJob', () => {
       assert.deepEqual(pauseCalls, [REQUEST]);
       assert.equal(state.status, 'awaiting_input');
       assert.deepEqual(state.clarification, { ...REQUEST, answers: null });
-      assert.equal(state.estimatedTokens, null);
+      // 예약한 예상 비용(12_345)은 답변 대기로 멈추면 함께 비운다
+      assert.equal(reserved, 12_345);
+      assert.equal(state.estimatedCost, null);
       // 기획까지만 돌고 분석·작성은 시작하지 않는다
       assert.deepEqual(stages, ['classify']);
       assert.deepEqual(steps, []);
@@ -317,7 +328,7 @@ describe('runJob', () => {
 
       assert.equal(await runJob('job-1', dependencies), 'awaiting_input');
       assert.equal(reserved, 12_345);
-      assert.equal(state.estimatedTokens, null);
+      assert.equal(state.estimatedCost, null);
     });
   });
 
@@ -331,7 +342,7 @@ describe('runJob', () => {
     assert.deepEqual(stages, []);
     assert.equal(state.status, 'failed');
     assert.equal(state.errorCode, 'internal');
-    assert.equal(state.estimatedTokens, null);
+    assert.equal(state.estimatedCost, null);
     assert.equal(state.usedTokens, 0);
     assert.equal(signals.at(-1)?.status, 'failed');
   });
@@ -365,7 +376,7 @@ describe('runJob', () => {
     assert.deepEqual(stages, []);
     assert.equal(state.status, 'failed');
     assert.equal(state.errorCode, 'quota_exceeded');
-    assert.equal(state.estimatedTokens, 12_345);
+    assert.equal(state.estimatedCost, 12_345);
     assert.equal(state.usedTokens, 0);
     assert.equal(signals.at(-1)?.status, 'failed');
   });
@@ -386,8 +397,29 @@ describe('runJob', () => {
 
     assert.equal(await runJob('job-1', dependencies), 'completed');
     assert.deepEqual(stages, ['classify', 'analyze', 'write']);
-    assert.equal(state.estimatedTokens, 12_345);
+    assert.equal(state.estimatedCost, 12_345);
     assert.equal(state.usedTokens, 6_000);
+  });
+
+  it('응답마다 토큰과 비용이 addUsage 로 기록된다', async () => {
+    const { pipeline } = createUsagePipeline({ classify: 1_000, analyze: 2_000, write: 3_000 });
+    const { dependencies, state } = createDependencies({ pipeline });
+    const reports: { tokens: number; cost: number }[] = [];
+    const addUsage = dependencies.jobs.addUsage;
+    dependencies.jobs.addUsage = async (jobId, usage) => {
+      reports.push(usage);
+      return addUsage(jobId, usage);
+    };
+
+    assert.equal(await runJob('job-1', dependencies), 'completed');
+    // 가짜 파이프라인은 응답마다 cost = tokens × 2 를 보고한다
+    assert.deepEqual(reports, [
+      { tokens: 1_000, cost: 2_000 },
+      { tokens: 2_000, cost: 4_000 },
+      { tokens: 3_000, cost: 6_000 },
+    ]);
+    assert.equal(state.usedTokens, 6_000);
+    assert.equal(state.usedCost, 12_000);
   });
 
   it('두 번째 단계 실패 시 첫 단계 사용량 유지', async () => {
@@ -474,7 +506,7 @@ describe('runJob (빈칸 채우기)', () => {
     assert.equal(state.result, '첫 화면이 3초 정도 걸렸다.');
     assert.equal(state.usedTokens, 700);
     assert.equal(
-      state.estimatedTokens,
+      state.estimatedCost,
       filler.estimate({ context: BLANK_CONTEXT, blank: BLANK_CONTEXT.blank!, analysis: STORED, onUsage: async () => {} }),
     );
     // 저장한 분석과 답이 프롬프트에 들어간다
@@ -504,7 +536,7 @@ describe('runJob (빈칸 채우기)', () => {
     assert.equal(await runJob('job-1', dependencies), 'failed');
     assert.equal(calls.length, 0);
     assert.equal(state.errorCode, 'quota_exceeded');
-    assert.ok((state.estimatedTokens ?? 0) > 0);
+    assert.ok((state.estimatedCost ?? 0) > 0);
     assert.equal(state.usedTokens, 0);
     assert.equal(signals.at(-1)?.status, 'failed');
   });
@@ -525,7 +557,7 @@ describe('runJob (빈칸 채우기)', () => {
     assert.equal(await runJob('job-1', dependencies), 'failed');
     assert.equal(calls.length, 0);
     assert.equal(state.errorCode, 'internal');
-    assert.equal(state.estimatedTokens, null);
+    assert.equal(state.estimatedCost, null);
   });
 
   it('정리 후 남는 글이 없으면 invalid_result, 쓴 사용량은 남는다', async () => {
