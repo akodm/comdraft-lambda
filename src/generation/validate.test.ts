@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 
 import type { PreparedHunk } from './prepare.ts';
 import { AnalysisSchema, BLANK_LIMIT, type Analysis, type BlankKind, type Plan, type RawPlan } from './schemas.ts';
-import { missingHeadingLevels, sanitizeHint, validateAnalysis, validatePlan } from './validate.ts';
+import { missingHeadingLevels, sanitizeHint, sanitizeTags, validateAnalysis, validatePlan } from './validate.ts';
 
 const section = (level: number, extra: Partial<Plan['sections'][number]> = {}) => ({
   level,
@@ -53,7 +53,7 @@ const ctxFor = (p: Plan, hunks: PreparedHunk[] = []) => ({
   length: 'long',
 });
 
-const empty: Analysis = { facts: [], code: [], unknowns: [] };
+const empty: Analysis = { facts: [], code: [], unknowns: [], tags: [] };
 
 describe('missingHeadingLevels', () => {
   const planWith = (levels: number[]): Plan => ({
@@ -163,8 +163,30 @@ describe('validatePlan', () => {
   });
 });
 
+describe('sanitizeTags', () => {
+  it('문자열만 앞뒤 공백을 지우고 빈 값을 버리며, 각 50자·최대 10개로 자른다', () => {
+    const out = sanitizeTags([' React ', '', '   ', 1, null, 'x'.repeat(60), ...Array.from({ length: 12 }, (_, i) => `t${i}`)]);
+
+    assert.equal(out.length, 10);
+    assert.deepEqual(out.slice(0, 3), ['React', 'x'.repeat(50), 't0']);
+  });
+
+  it('배열이 아니면 빈 배열', () => {
+    assert.deepEqual(sanitizeTags(undefined), []);
+    assert.deepEqual(sanitizeTags('react'), []);
+  });
+});
+
 describe('validateAnalysis', () => {
   const p = plan([section(2), section(3)]);
+
+  it('태그는 느슨하게 정리해 남긴다 (태그가 이상해도 분석은 실패하지 않음)', () => {
+    const out = validateAnalysis(
+      { ...empty, tags: [' nextjs ', '', 'TypeScript'], unknowns: [{ id: 'U1', section: 0, kind: 'detail', ask: '?' }] },
+      ctxFor(p),
+    );
+    assert.deepEqual(out.tags, ['nextjs', 'TypeScript']);
+  });
 
   it('없는 근거를 지우고 근거가 비면 사실을 버린다', () => {
     const out = validateAnalysis(
@@ -328,6 +350,7 @@ describe('validateAnalysis', () => {
           // 회고 빈칸은 마지막 절에 둔다
           { id: 'U3', section: 0, kind: 'lesson', ask: '가장 어려웠던 부분은 무엇이었나요?' },
         ],
+        tags: [],
       },
       { ...ctxFor(p3), commitIds: new Set(['C1']) },
     );
@@ -462,6 +485,7 @@ describe('validateAnalysis 구조화 출력 값 보정', () => {
           { id: 'U1', section: 0, kind: 'surprise', ask: '' },
           { id: 'U2', section: 1, kind: 'lesson', ask: '무엇을 배웠나' },
         ],
+        tags: [],
       },
       ctxFor(p),
     );
@@ -486,6 +510,7 @@ describe('validateAnalysis 구조화 출력 값 보정', () => {
           { ...pick, id: 'K2', mode: 'diff', startLine: 3, endLine: 4 },
         ],
         unknowns: [{ id: 'U1', section: 0, kind: 'detail', ask: 'q' }],
+        tags: [],
       },
       ctxFor(p, [hunk('C1.F1.H1', 5)]),
     );
@@ -500,6 +525,7 @@ describe('validateAnalysis 구조화 출력 값 보정', () => {
       facts: [],
       code: [{ id: 'K1', section: 0, from: 'x', startLine: 1, endLine: 1, mode: 'before', point: '' }],
       unknowns: [{ id: 'U1', section: 0, kind: 'surprise', ask: '' }],
+      tags: [],
     });
     assert.equal(parsed.success, true);
   });

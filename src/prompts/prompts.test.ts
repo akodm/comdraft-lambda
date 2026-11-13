@@ -112,6 +112,7 @@ const analysis: Analysis = {
     { id: 'S1', section: 1, from: 'C1.F1.H1', startLine: 1, endLine: 3, mode: 'after', point: '관찰 시작' },
   ],
   unknowns: [{ id: 'U1', section: 0, kind: 'motivation', ask: '계기는 무엇인가요' }],
+  tags: [],
 };
 
 const writeInput = (ctx: JobContext = context()) => ({
@@ -1364,4 +1365,20 @@ describe('render', () => {
     assert.ok(preview.includes('가'.repeat(LINK_PREVIEW_CHARS)));
     assert.ok(renderLinks([link], { preview: false }).includes(link.text));
   });
+});
+
+describe('기술 태그 안내', () => {
+  const PHRASES = {
+    ko: { tags: 'tags', lowercase: '널리 쓰는 짧은 소문자 표기', generic: '일반 개념어' },
+    en: { tags: 'tags', lowercase: 'short, lowercase names people commonly use', generic: 'general concepts' },
+  } as const;
+
+  for (const pack of packs) {
+    const phrase = PHRASES[pack.locale];
+    it(`${pack.locale}: 분석은 글에서 다룬 기술만 짧은 소문자 표기의 태그로 고른다`, () => {
+      for (const key of ['tags', 'lowercase', 'generic'] as const) {
+        assert.ok(pack.analyze.system.includes(phrase[key]), key);
+      }
+    });
+  }
 });

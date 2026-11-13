@@ -86,6 +86,8 @@ export const AnalysisSchema = z.object({
       ask: z.string(),
     }),
   ),
+  // 글에서 실제로 다룬 기술 태그 (검증은 느슨하게만, 최종 규칙은 앱이 적용, 저장용 분석에는 넣지 않음)
+  tags: z.array(z.string()),
 });
 
 // 모델이 돌려준 그대로의 기획 (role 이 목록 밖일 수 있음)
@@ -117,4 +119,5 @@ export interface Analysis {
   facts: RawAnalysis['facts'];
   code: (Omit<RawAnalysis['code'][number], 'mode'> & { mode: CodeMode })[];
   unknowns: (Omit<RawAnalysis['unknowns'][number], 'kind'> & { kind: BlankKind })[];
+  tags: string[];
 }

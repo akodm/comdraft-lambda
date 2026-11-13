@@ -20,6 +20,9 @@ import {
 } from './schemas.ts';
 
 const HINT_MAX = 80;
+// 기술 태그: 개수와 한 개의 길이(코드 포인트) 상한 (앱이 더 좁은 규칙으로 다시 정규화한다)
+const TAG_LIMIT = 10;
+const TAG_MAX = 50;
 const MIN_LEVEL = 2;
 const MAX_LEVEL = 6;
 
@@ -34,6 +37,17 @@ export const sanitizeHint = (text: string): string => {
     .trim();
   return Array.from(cleaned).slice(0, HINT_MAX).join('').trim();
 };
+
+// 분석이 고른 기술 태그를 느슨하게 정리한다: 문자열만, 앞뒤 공백 제거, 빈 값 제거, 각 50자, 최대 10개.
+// 태그가 이상해도 분석을 실패시키지 않는다 (표기 통일·중복 제거는 앱의 normalizeTags 가 맡음).
+export const sanitizeTags = (raw: unknown): string[] =>
+  Array.isArray(raw)
+    ? raw
+        .filter((tag): tag is string => typeof tag === 'string')
+        .map((tag) => Array.from(tag.trim()).slice(0, TAG_MAX).join('').trim())
+        .filter((tag) => tag.length > 0)
+        .slice(0, TAG_LIMIT)
+    : [];
 
 // 목록 밖의 값은 기본값으로 (comdraft normalizeBlankAttrs 와 같은 규칙)
 const toBlankKind = (kind: string): BlankKind =>
@@ -248,7 +262,7 @@ const maxUnknownNumber = (unknowns: RawAnalysis['unknowns']): number =>
     return match ? Math.max(max, Number(match[1])) : max;
   }, 0);
 
-// 근거 없는 사실, 잘못된 코드 위치, 앞 조각과 겹치는 코드 위치를 버리고 빈칸 문구를 정리한다.
+// 근거 없는 사실, 잘못된 코드 위치, 앞 조각과 겹치는 코드 위치를 버리고 빈칸 문구와 태그를 정리한다.
 // 목록 밖의 코드 표시 방식은 after, 빈칸 종류는 detail 로 바꾼다.
 // 빈칸은 길이별 상한(BLANK_LIMIT)까지만 앞에서부터 남긴다. 재료가 없는 절은 작성 단계가 이웃 절과 합치므로 빈칸을 더하지 않는다.
 // 다만 글 전체에 사실·코드·빈칸이 하나도 없으면 본문을 쓸 수 없으므로 첫 절에 detail 빈칸 하나를 둔다.
@@ -311,5 +325,5 @@ export const validateAnalysis = (
     });
   }
 
-  return { facts, code, unknowns };
+  return { facts, code, unknowns, tags: sanitizeTags(analysis.tags) };
 };

@@ -77,6 +77,7 @@ const ANALYSIS: Analysis = {
     { id: 'S2', section: 0, from: 'C2.F1.H1', startLine: 1, endLine: 2, mode: 'after', point: '못 본 코드' },
   ],
   unknowns: [{ id: 'U1', section: 0, kind: 'motivation', ask: '왜 했나' }],
+  tags: ['react', ' nextjs '],
 };
 
 const MARKDOWN = '# 지연 로딩\n\n## 적용\n\n지연 로딩을 넣었다 {{commit:C1}}\n\n{{code:S1}}\n\n{{ask:U1}}';
@@ -191,7 +192,7 @@ const run = async (
   const analyzed = await pipeline.analyze(input, classified);
   const written = await pipeline.write(input, analyzed);
   const markdown = await pipeline.review(input, written);
-  return { prepared, estimate, classified, analyzed, written, markdown, usage, stored, errors };
+  return { pipeline, prepared, estimate, classified, analyzed, written, markdown, usage, stored, errors };
 };
 
 // 준비와 예상량만 계산한다 (Claude 는 부르지 않음)
@@ -539,6 +540,7 @@ describe('createClaudePipeline', () => {
       facts: [],
       code: [],
       unknowns: [{ id: 'U1', section: 0, kind: 'detail', ask: '무엇을 올렸나' }],
+      tags: [],
     };
     const { llm } = fakeLlm(plan, analysis, '# 의존성\n\n## 정리\n\n{{ask:U1}}');
     const { markdown } = await run(llm, { commits: lockOnly, context: { referenceUrls: [] } });
@@ -666,6 +668,14 @@ describe('createClaudePipeline', () => {
     const { usage } = await run(llm);
 
     assert.deepEqual(usage, [CALL_USAGE, CALL_USAGE, CALL_USAGE, CALL_USAGE]);
+  });
+
+  it('분석 단계가 고른 태그를 정리해 작업 완료까지 넘긴다 (저장용 분석에는 넣지 않음)', async () => {
+    const { llm } = fakeLlm(PLAN, ANALYSIS, MARKDOWN);
+    const { pipeline, analyzed, stored } = await run(llm);
+
+    assert.deepEqual(pipeline.tags?.(analyzed), ['react', 'nextjs']);
+    assert.ok(!JSON.stringify(stored).includes('react'));
   });
 
   it('분석 단계는 검증한 분석을 저장용으로 한 번 넘긴다 (코드 원문·근거 없이, 상한을 넘은 빈칸 없이)', async () => {
