@@ -46,6 +46,7 @@ const createMemoryJobs = (
     status: initialStatus,
     step: 0,
     result: null as string | null,
+    tags: null as string[] | null,
     errorCode: null as string | null,
     estimatedCost: null as number | null,
     usedTokens: 0,
@@ -75,12 +76,12 @@ const createMemoryJobs = (
       state.step = step;
       return true;
     },
-    complete: async (_jobId, result) => {
+    complete: async (_jobId, result, tags) => {
       if (state.status !== 'running') {
         return false;
       }
 
-      Object.assign(state, { status: 'completed', step: 3, result });
+      Object.assign(state, { status: 'completed', step: 3, result, tags });
       return true;
     },
     fail: async (_jobId, errorCode) => {
@@ -218,6 +219,30 @@ describe('runJob', () => {
     );
   });
 
+  it('분석 단계가 고른 태그를 결과와 함께 기록한다', async () => {
+    const pipeline: Pipeline<unknown, unknown, { tags: string[] }, unknown> = {
+      prepare: async () => ({}),
+      estimate: () => 1,
+      classify: async () => ({}),
+      clarification: () => null,
+      analyze: async () => ({ tags: ['nextjs'] }),
+      tags: (analyzed) => analyzed.tags,
+      write: async () => '# 결과',
+      review: async (_input, written) => written as string,
+    };
+    const { dependencies, state } = createDependencies({ pipeline: pipeline as Pipeline });
+
+    assert.equal(await runJob('job-1', dependencies), 'completed');
+    assert.deepEqual(state.tags, ['nextjs']);
+  });
+
+  it('태그를 고르지 않는 파이프라인이면 빈 태그로 완료한다', async () => {
+    const { dependencies, state } = createDependencies();
+
+    assert.equal(await runJob('job-1', dependencies), 'completed');
+    assert.deepEqual(state.tags, []);
+  });
+
   it('이미 시작했거나 끝난 작업은 다시 실행하지 않는다 (중복 호출)', async () => {
     const { dependencies, signals } = createDependencies({}, 'completed');
 
@@ -264,9 +289,9 @@ describe('runJob', () => {
       };
       let completed = false;
       const complete = dependencies.jobs.complete;
-      dependencies.jobs.complete = async (jobId, result) => {
+      dependencies.jobs.complete = async (jobId, result, tags) => {
         completed = true;
-        return complete(jobId, result);
+        return complete(jobId, result, tags);
       };
 
       assert.equal(await runJob('job-1', dependencies), 'awaiting_input');
@@ -517,8 +542,9 @@ describe('runJob (빈칸 채우기)', () => {
       signals.map(({ status, step }) => `${status}:${step}`),
       ['running:0', 'completed:3'],
     );
-    // 빈칸 채우기는 분석을 저장하지 않는다
+    // 빈칸 채우기는 분석을 저장하지 않고, 태그도 고르지 않는다
     assert.equal(state.analysis, null);
+    assert.deepEqual(state.tags, []);
   });
 
   it('저장한 분석이 없어도 본문과 답만으로 완료한다', async () => {

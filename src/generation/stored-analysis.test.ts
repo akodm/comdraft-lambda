@@ -25,6 +25,7 @@ const analysis: Analysis = {
     { id: 'S1', section: 1, from: 'C1.F1.H1', startLine: 1, endLine: 3, mode: 'after', point: '관찰을 시작하는 부분' },
   ],
   unknowns: [{ id: 'U1', section: 0, kind: 'motivation', ask: '첫 화면이 얼마나 느렸나요?' }],
+  tags: ['react'],
 };
 
 describe('toStoredAnalysis', () => {

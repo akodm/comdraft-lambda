@@ -49,6 +49,7 @@ const analysis: Analysis = {
     { id: 'S2', section: 0, from: 'C1.F1.H1', startLine: 1, endLine: 3, mode: 'diff', point: 'p' },
   ],
   unknowns: [{ id: 'U1', section: 0, kind: 'motivation', ask: '왜 "이걸" {했나}' }],
+  tags: [],
 };
 
 const run = (markdown: string, overrides: Partial<Parameters<typeof assemble>[0]> = {}): string =>

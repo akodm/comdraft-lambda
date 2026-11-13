@@ -1,6 +1,8 @@
 /**
  * AI 초안 작성 작업 계약 (comdraft Next.js 의 lib/generation/contract.ts 와 같게 유지)
  * - 요청 형식, Broadcast 이벤트, 오류 코드, 시간 제한이 바뀌면 양쪽을 함께 수정
+ * - 초안 작성(draft) 작업을 마치면 결과와 함께 분석 단계가 고른 기술 태그 배열을 draft_prompt.tags 에 기록
+ *   (느슨하게만 정리, 앱이 반영할 때 표기 규칙으로 정규화, 빈칸 채우기는 빈 배열)
  */
 
 // 작업 상태 (draft_prompt.status)

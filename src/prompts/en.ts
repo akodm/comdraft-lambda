@@ -304,6 +304,12 @@ ${ID_RULE}
 - ask: one question for the author, in English, within 80 characters, without quotes or braces. Ask one specific thing the author can answer in a sentence or two. Avoid something vague like "more details" or several questions in one (e.g. Why did you choose IntersectionObserver?). Do not ask implementation questions the code already answers (such as where a function is called), questions that name internal identifiers, or questions built on a premise not in the inputs. A blank asks for what only the author knows (reasons, experience, results).
 - Do not ask about what you already confirmed as a fact or what the request already says. Asking the author again for what they already said makes them write the same answer twice. Before making a blank, look at the request and the R facts again, and do not make the blank if its answer is already there (e.g. if the request says "I could not put defaults in the config, so I built a dedicated component and hooks", do not ask why you built that component and those hooks; if it says "it was easy to use", do not ask how it went after using it, or for effects or numbers such as how much time it saved). An impression is already the author's answer, and a blank asking them to measure its effect is hard for them to answer.
 
+## Tag rules
+- tags: pick 3 to 6 names of the technologies (languages, frameworks, libraries, platforms, databases) this post actually covers. They are used later to group posts about the same technology.
+- Use the short, lowercase names people commonly use (e.g. typescript, react, nextjs, vercel, postgresql). The same technology needs the same name in every post to be grouped.
+- Only include technologies that actually appear in the commits and code. Leave out technologies that are only in dependency files and that the post does not cover.
+- Do not include general concepts such as refactoring, bugfix, or performance. They are not technology names and cannot group posts.
+
 ## Filling sections
 - For each section, first look for the facts and code that back its purpose.
 - Do not fill a section with blanks because you found no evidence for it. Leave such a section without facts; the writing stage merges it into a neighboring section. Do not inflate or split facts to add volume.

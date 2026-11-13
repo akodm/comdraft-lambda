@@ -74,8 +74,8 @@ export interface JobStore {
   loadContext: (jobId: string) => Promise<JobContext | null>;
   // 진행 단계 갱신 (running 인 작업만, 그 사이 끝났으면 false)
   markStep: (jobId: string, step: GenerationStep) => Promise<boolean>;
-  // 결과 저장 후 완료 (running 인 작업만)
-  complete: (jobId: string, result: string) => Promise<boolean>;
+  // 결과와 분석이 고른 기술 태그를 저장하고 완료 (running 인 작업만)
+  complete: (jobId: string, result: string, tags: string[]) => Promise<boolean>;
   // 실패 처리 (진행 중인 작업만, 사유 코드만 남김)
   fail: (jobId: string, errorCode: GenerationErrorCode) => Promise<boolean>;
   // 예상 비용(마이크로달러)을 기록하고 작업이 만들어진 주의 남은 양으로 시작할 수 있는지 판정 (사용자별 advisory lock 트랜잭션)
@@ -208,10 +208,10 @@ export const createJobStore = (sql: Database): JobStore => ({
     return rows.length > 0;
   },
 
-  complete: async (jobId, result) => {
+  complete: async (jobId, result, tags) => {
     const rows = await sql`
       update comdraft.draft_prompt
-      set status = 'completed', step = 3, result = ${result}, finished_at = now()
+      set status = 'completed', step = 3, result = ${result}, tags = ${tags}::text[], finished_at = now()
       where id = ${jobId} and status = 'running'
       returning id
     `;

@@ -27,8 +27,8 @@ export interface RunJobDependencies<P = unknown, C = unknown, A = unknown, W = u
 // awaiting_input: 작성 전 되묻기 질문을 저장하고 답을 기다리며 멈춤 (끝난 것이 아니라 답을 받으면 다시 실행됨)
 export type RunJobOutcome = 'completed' | 'failed' | 'skipped' | 'cancelled' | 'awaiting_input';
 
-// 작업 실행 결과: 결과 Markdown, 또는 되묻기로 멈춤 (null 은 중간에 다른 곳에서 끝남)
-type DraftRun = { kind: 'result'; markdown: string } | { kind: 'paused' };
+// 작업 실행 결과: 결과 Markdown 과 분석이 고른 기술 태그, 또는 되묻기로 멈춤 (null 은 중간에 다른 곳에서 끝남)
+type DraftRun = { kind: 'result'; markdown: string; tags: string[] } | { kind: 'paused' };
 
 // 예상량 기록 결과 → 시작할 수 없으면 실패 (초과는 예상량이 이미 기록됐으므로 반드시 실패로 끝내야 한다,
 // quota_exceeded 는 사용량 0 으로 셈)
@@ -160,7 +160,11 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
     ensureTime();
     const written = await pipeline.write(input, analyzed);
     // 검토는 시간이 부족하면 스스로 건너뛰므로 앞에서 따로 확인하지 않는다 (단계 표시도 완료 전까지 2 유지)
-    return { kind: 'result', markdown: await pipeline.review(input, written) };
+    return {
+      kind: 'result',
+      markdown: await pipeline.review(input, written),
+      tags: pipeline.tags?.(analyzed) ?? [],
+    };
   };
 
   await notify('running');
@@ -174,7 +178,8 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
 
     const run: DraftRun | null =
       context.kind === 'fill'
-        ? { kind: 'result', markdown: await runFill(context) }
+        ? // 빈칸 채우기는 태그를 고르지 않음 (앱도 빈칸 결과로 태그를 바꾸지 않음)
+          { kind: 'result', markdown: await runFill(context), tags: [] }
         : await runDraft(context);
 
     if (run === null) {
@@ -192,7 +197,7 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
       throw new GenerationFailure('invalid_result');
     }
 
-    if (!(await jobs.complete(jobId, result))) {
+    if (!(await jobs.complete(jobId, result, run.tags))) {
       return 'cancelled';
     }
 

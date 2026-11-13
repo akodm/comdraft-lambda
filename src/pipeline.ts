@@ -67,6 +67,8 @@ export interface Pipeline<P = unknown, C = unknown, A = unknown, W = unknown> {
   clarification: (classified: C) => ClarifyRequest | null;
   // 2단계: 구분 결과를 바탕으로 변경 내용 분석
   analyze: (input: PipelineInput, classified: C) => Promise<A>;
+  // 분석 결과가 고른 기술 태그 (작업 완료 때 결과와 함께 기록, 없으면 빈 태그로 완료)
+  tags?: (analyzed: A) => string[];
   // 3단계: 분석 결과로 글 초안(Markdown, 자리표시자 형태) 작성
   write: (input: PipelineInput, analyzed: A) => Promise<W>;
   // 4단계: 초안을 독자 기준으로 검토하고 필요할 때만 고쳐 쓴 뒤 조립해 최종 Markdown 을 만든다
@@ -252,6 +254,8 @@ export const createClaudePipeline = ({
 
     return { ...classified, analysis };
   },
+
+  tags: (analyzed) => analyzed.analysis.tags,
 
   write: async ({ context, onUsage }, analyzed) => {
     const pack = getPromptPack(context.locale);
