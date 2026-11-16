@@ -89,3 +89,8 @@ variable "api_throttle_burst_limit" {
   type        = number
   default     = 5
 }
+
+variable "daily_report_email" {
+  description = "일일 현황 보고를 받을 이메일 (SNS 이메일 구독)"
+  type        = string
+}

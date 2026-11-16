@@ -16,3 +16,8 @@ output "lambda_role_arn" {
   description = "Anthropic 연동 규칙의 subject 로 정확히 맞출 Lambda 실행 역할 ARN"
   value       = aws_iam_role.lambda.arn
 }
+
+output "daily_report_topic_arn" {
+  description = "Next.js 의 일일 현황 보고 발행 대상 (DAILY_REPORT_TOPIC_ARN)"
+  value       = aws_sns_topic.daily_report.arn
+}

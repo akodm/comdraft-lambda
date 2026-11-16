@@ -110,6 +110,10 @@ Anthropic 인증은 API 키 없이 **Workload Identity Federation** 을 씀. Lam
    aws iam create-access-key --user-name comdraft-generation-invoker --profile comdraft-main-iam
    ```
 
+5. 일일 현황 보고: 적용 후 `daily_report_email` 로 온 AWS 확인 메일의 "Confirm subscription" 을 누르고,
+   `daily_report_topic_arn` 출력값을 comdraft 의 Vercel 환경 변수 `DAILY_REPORT_TOPIC_ARN` 에 등록
+   (발행은 4번의 invoker 사용자 키를 그대로 사용, Terraform 사용자에게 SNS 토픽·구독 권한이 필요)
+
 ## 배포 순서
 
 comdraft 와 함께 바뀌는 변경은 아래 순서를 지킵니다.
