@@ -14,3 +14,6 @@ anthropic_organization_id    = "00000000-0000-0000-0000-000000000000"
 anthropic_service_account_id = "svac_..."
 # 규칙이 워크스페이스 하나만 허용하면 빈 값
 anthropic_workspace_id = ""
+
+# 일일 현황 보고를 받을 이메일 (적용 후 AWS 확인 메일의 링크를 눌러야 전달 시작)
+daily_report_email = "you@example.com"
