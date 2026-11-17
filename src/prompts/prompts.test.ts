@@ -615,6 +615,26 @@ const reviewInput = (overrides: Partial<{ draft: string; links: PreparedLink[] }
   ...overrides,
 });
 
+describe('Markdown 요청', () => {
+  // 요청의 목록·서식을 글로 옮기지 않고, 요청 안 코드 블록은 참고 자료로만 읽는다
+  const phrases = {
+    ko: ['Markdown 으로 올 수 있다', '서식으로 옮기지 않는다', '코드 블록으로 옮겨 적지 않는다'],
+    en: ['may be written in Markdown', 'sentences, or formatting', 'do not copy it into the post as a code block'],
+  } as const;
+
+  it('데이터 규칙을 담는 모든 단계가 Markdown 요청 규칙도 담는다', () => {
+    for (const pack of packs) {
+      const stages = [pack.plan, pack.analyze, pack.write, pack.review, pack.revise];
+      for (const stage of stages) {
+        assert.ok(stage.system.includes(pack.dataRuleMarker), `${pack.locale} 데이터 규칙 없음`);
+        for (const phrase of phrases[pack.locale]) {
+          assert.ok(stage.system.includes(phrase), `${pack.locale} "${phrase}" 없음`);
+        }
+      }
+    }
+  });
+});
+
 describe('검토·고쳐 쓰기 프롬프트', () => {
   it('검토·고쳐 쓰기 system 은 데이터·목소리·독자 규칙을 담는다', () => {
     for (const pack of packs) {
