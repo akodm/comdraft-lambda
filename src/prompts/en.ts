@@ -88,7 +88,8 @@ const VOICE_RULE = `## Voice
 - Write in the author's first person (e.g. "I did …", "I decided to …"). Follow the tone option for register, but the point of view is always the author's.
 - Do not write like a reply or a report. Phrases such as "as you requested", "Below is …", or "To summarize, here is …" answer the request, so the post reads like a reply instead of a blog post.
 - Do not write source sentences such as a commit hash, a commit id (C1), or "this post is based on commit …". Readers come for the story of the work, not the repository history.
-- Do not write sentences that announce or point at a blank ("I explain why in the next blank", "I note it below"). Once the author fills a blank it becomes body text, so a sentence pointing at it stays behind and reads oddly.`;
+- Do not write sentences that announce or point at a blank ("I explain why in the next blank", "I note it below"). Once the author fills a blank it becomes body text, so a sentence pointing at it stays behind and reads oddly.
+- Do not refer to the author in the third person ("the author", "the writer"), and do not write sentences in which the post describes itself ("this post assumes …", "the question this post set out to answer"). If what the author believed differs from a reference document, write both as facts in the first person (e.g. "I thought the limit was 2, but the documentation lists 100"). Do not decide which one is right; leave that to the blank rules.`;
 
 const readerRuleMarker = 'The reader has never seen this repository, its code, or the request';
 
@@ -403,7 +404,7 @@ const reviewKindText: Record<ReviewKind, string> = {
   unsupported:
     'A fact, number, cause, or effect that is not in the material (`<fact>`, `<point>`, `<source>`, or the question of a `<blank>`). Sentences that set up a cause ("so", "because") or a problem or conflict ("the problem I ran into") not in the facts, or that make up the author\'s thoughts or expectations ("At first I thought … would do"), are also this problem. General knowledge that briefly explains a concept named in the inputs, and sentences that describe an internal name by what it does, are not problems.',
   voice:
-    'Sentences written like a reply or a report ("as you requested", "Below is …"), a point of view other than the author\'s first person, guessing about the author\'s own work ("this appears to …", "this can be seen as …"), document content written as hearsay ("they say …"), sentences that announce or point at a blank, or source sentences such as a commit hash or "this post is based on commit …".',
+    'Sentences written like a reply or a report ("as you requested", "Below is …"), a point of view other than the author\'s first person, guessing about the author\'s own work ("this appears to …", "this can be seen as …"), document content written as hearsay ("they say …"), sentences that announce or point at a blank, sentences that refer to the author in the third person or in which the post describes itself ("the author knew", "this post assumes …"), or source sentences such as a commit hash or "this post is based on commit …".',
   flow:
     'A broken connection between sections, the same thing said twice (including the same change or document explanation appearing again in two or more sections), sentences about small changes unrelated to the topic (style or CSS paths, formatting, and so on), or a broken opening or closing rule. The opening must not start by stating sources or with a table-of-contents line such as "In this post, I will cover …", and the closing must not list a summary of the facts or make up lessons that are not in the material.',
 };
@@ -667,6 +668,11 @@ Turn the answer above into 1 to 3 paragraphs for the \`${FILL_TARGET_MARKER}\` p
       kind: 'voice',
       pattern: /\b(they say|it is said)\b/i,
       fix: 'Instead of hearsay, write what the source says, as in "the documentation explains that …".',
+    },
+    {
+      kind: 'voice',
+      pattern: /\b(the (author|writer) (knew|thought|assumed|expected|believed)|this post (assumes|covers|explores|proceeds))\b/i,
+      fix: 'This sentence has the post describe itself or refers to the author in the third person; write only the facts in the author\'s first person (e.g. "I thought it was …, but the documentation lists …").',
     },
     {
       kind: 'unsupported',
