@@ -204,6 +204,22 @@ describe('validateAnalysis', () => {
     assert.deepEqual(out.facts.map((f) => [f.id, f.evidence]), [['K1', ['C1', 'L1', 'R']]]);
   });
 
+  it('직접 입력 소스(P1)와 그 조각(P1.F1.H1)도 커밋처럼 근거·코드 선택으로 쓴다', () => {
+    const out = validateAnalysis(
+      {
+        ...empty,
+        facts: [{ id: 'K1', section: 0, text: 'a', evidence: ['P1', 'P1.F1.H1', 'P9', 'P9.F1.H1'] }],
+        code: [
+          { id: 'S1', section: 0, from: 'P1.F1.H1', startLine: 1, endLine: 2, mode: 'after', point: 'p' },
+          { id: 'S2', section: 0, from: 'P9.F1.H1', startLine: 1, endLine: 1, mode: 'after', point: 'p' },
+        ],
+      },
+      { ...ctxFor(p, [hunk('P1.F1.H1', 3)]), commitIds: new Set(['C1', 'P1']) },
+    );
+    assert.deepEqual(out.facts.map((f) => f.evidence), [['P1', 'P1.F1.H1']]);
+    assert.deepEqual(out.code.map((c) => c.id), ['S1']);
+  });
+
   it('가림·범위 밖·40줄 초과 코드를 버린다', () => {
     const pick = (id: string, from: string, s: number, e: number) => ({
       id,

@@ -30,7 +30,7 @@ const TAGS = [
   'request', 'commit', 'message', 'files', 'hunk', 'link', 'links', 'title', 'text', 'plan',
   'section', 'heading', 'purpose', 'hunks', 'takeaway', 'outline', 'fact', 'code', 'point',
   'source', 'blank', 'context', 'analysis', 'question', 'answer', 'draft', 'issues', 'issue',
-  'quote', 'fix', 'clarification', 'qa',
+  'quote', 'fix', 'clarification', 'qa', 'snippet',
 ] as const;
 type Tag = (typeof TAGS)[number];
 
@@ -110,6 +110,14 @@ const renderCatalogCommit = (commit: PreparedCommit, collapsed: boolean): string
     fileLine(file, collapsed),
     ...(collapsed ? [] : file.hunks.map(hunkLine)),
   ]);
+  // 직접 입력 코드는 커밋 메시지가 없고, 이름(파일 하나의 이름)을 속성으로 보인다
+  if (commit.kind === 'snippet') {
+    return element(
+      'snippet',
+      { id: commit.id, name: commit.files[0]?.filename },
+      element('files', {}, files.join('\n')),
+    );
+  }
   return element(
     'commit',
     { id: commit.id },
@@ -120,13 +128,15 @@ const renderCatalogCommit = (commit: PreparedCommit, collapsed: boolean): string
   );
 };
 
-// 커밋별 파일 줄과 hunk `@@` 줄. 상한을 넘으면 가장 최근 커밋(배열 끝, 큰 C 번호)부터 hunk 줄을 생략한다.
+// 커밋별 파일 줄과 hunk `@@` 줄. 상한을 넘으면 가장 최근 커밋(큰 C 번호)부터 hunk 줄을 생략한다 (직접 입력 코드는 그대로).
 export const renderCatalog = (commits: PreparedCommit[]): string => {
   const collapsed = new Set<number>();
   const render = (): string =>
     commits.map((commit, i) => renderCatalogCommit(commit, collapsed.has(i))).join('\n');
   let text = render();
   for (let i = commits.length - 1; i >= 0 && estimateTokens(text) > PLAN_CATALOG_TOKENS; i -= 1) {
+    // 직접 입력 코드는 작성자가 고른 코드이고 줄여도 거의 줄지 않아 접지 않는다
+    if (commits[i].kind === 'snippet') continue;
     collapsed.add(i);
     text = render();
   }
@@ -163,7 +173,7 @@ export const renderPlan = (plan: Plan, available?: Set<string>): string =>
   );
 
 export const renderCommitMessages = (commits: PreparedCommit[]): string =>
-  commits.map((commit) => element('commit', { id: commit.id }, escapeTagText(commit.message))).join('\n');
+  commits.filter((commit) => commit.kind === 'commit').map((commit) => element('commit', { id: commit.id }, escapeTagText(commit.message))).join('\n');
 
 // 파일 번호(C1.F2) → 경로
 export const fileNames = (commits: PreparedCommit[]): Map<string, string> =>
@@ -173,7 +183,9 @@ const fileIdOf = (hunkId: string): string => hunkId.replace(/\.H\d+$/, '');
 
 // 파일 번호 → 그 파일을 뒤에서 마지막으로 다시 바꾼 커밋 번호 (뒤 커밋이 다시 바꾸지 않은 파일은 없음)
 // 커밋은 오래된 순(C1 부터)이라, 앞 커밋 hunk 의 코드가 최종 상태가 아닐 수 있음을 분석 단계에 알린다
-export const laterChanges = (commits: PreparedCommit[]): Map<string, string> => {
+// 직접 입력 코드는 변경 이력이 아니라서 넣지 않는다
+export const laterChanges = (all: PreparedCommit[]): Map<string, string> => {
+  const commits = all.filter((commit) => commit.kind === 'commit');
   const later = new Map<string, string>();
   commits.forEach((commit, index) => {
     for (const file of commit.files) {
@@ -202,7 +214,14 @@ export const renderHunks = (
       const fileId = fileIdOf(hunk.id);
       return element(
         'hunk',
-        { id: hunk.id, lang: hunk.language, file: files.get(fileId), 'changed-later': later.get(fileId) },
+        {
+          id: hunk.id,
+          lang: hunk.language,
+          file: files.get(fileId),
+          'changed-later': later.get(fileId),
+          // 직접 입력 코드의 조각 (변경 내역이 아님)
+          source: hunk.id.startsWith('P') ? 'snippet' : undefined,
+        },
         [escapeTagText(hunk.header), ...lines].join('\n'),
       );
     })

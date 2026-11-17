@@ -1,3 +1,4 @@
+import type { GenerationCodeInput } from '../contract.ts';
 import type { CommitDetail } from '../github.ts';
 import {
   estimateTokens,
@@ -30,6 +31,8 @@ export interface PreparedFile {
 }
 
 export interface PreparedCommit {
+  // commit: 선택한 커밋 (C1..), snippet: 작성자가 직접 넣은 코드 (P1.., 변경 내역이 아님)
+  kind: 'commit' | 'snippet';
   id: string;
   sha: string;
   htmlUrl: string;
@@ -112,8 +115,14 @@ const extensionOf = (filename: string): string => {
   return dot <= 0 ? '' : base.slice(dot + 1).toLowerCase();
 };
 
+// 객체 자체의 키만 본다 (constructor, __proto__ 같은 기본 속성 이름이 언어로 잡히지 않게)
+const lookup = (table: Record<string, string>, key: string): string | undefined =>
+  Object.hasOwn(table, key) ? table[key] : undefined;
+
 export const languageForFile = (filename: string): string =>
-  LANGUAGES_BY_NAME[filename.split('/').pop() ?? filename] ?? LANGUAGES[extensionOf(filename)] ?? 'plaintext';
+  lookup(LANGUAGES_BY_NAME, filename.split('/').pop() ?? filename) ??
+  lookup(LANGUAGES, extensionOf(filename)) ??
+  'plaintext';
 
 // lock, 빌드 결과물, minified, 스냅샷은 본문을 넘기지 않는다
 const isExcludedFile = (filename: string): boolean => {
@@ -141,34 +150,43 @@ const splitPatch = (patch: string): Array<{ header: string; lines: string[] }> =
   return hunks;
 };
 
-const prepareHunks = (fileId: string, filename: string, patch: string): PreparedHunk[] => {
-  const language = languageForFile(filename);
-  return splitPatch(patch).map((raw, i) => {
-    const id = `${fileId}.H${i + 1}`;
-    const header = raw.header.slice(0, MAX_HUNK_LINE_CHARS);
-    const headerSecret = containsSecret(header);
-    const lines = raw.lines.slice(0, MAX_HUNK_LINES);
+// hunk 하나의 본문 정리: 긴 줄이 있으면 본문을 넘기지 않고, 비밀값이 있으면 가린다
+const toPreparedHunk = (
+  id: string,
+  rawHeader: string,
+  rawLines: string[],
+  language: string,
+): PreparedHunk => {
+  const header = rawHeader.slice(0, MAX_HUNK_LINE_CHARS);
+  const headerSecret = containsSecret(header);
+  const lines = rawLines.slice(0, MAX_HUNK_LINES);
 
-    // minified·생성 데이터처럼 긴 줄은 글로 설명할 코드가 아니고, 검사 비용만 큼
-    if (lines.some((line) => line.length > MAX_HUNK_LINE_CHARS)) {
-      return {
-        id,
-        header: headerSecret ? REDACTED_LINE : header,
-        lines: [LONG_LINE_MARKER],
-        redacted: true,
-        language,
-      };
-    }
-
-    const redacted = headerSecret || containsSecret(lines.join('\n'));
+  // minified·생성 데이터처럼 긴 줄은 글로 설명할 코드가 아니고, 검사 비용만 큼
+  if (lines.some((line) => line.length > MAX_HUNK_LINE_CHARS)) {
     return {
       id,
       header: headerSecret ? REDACTED_LINE : header,
-      lines: redacted ? [REDACTED_LINE] : lines,
-      redacted,
+      lines: [LONG_LINE_MARKER],
+      redacted: true,
       language,
     };
-  });
+  }
+
+  const redacted = headerSecret || containsSecret(lines.join('\n'));
+  return {
+    id,
+    header: headerSecret ? REDACTED_LINE : header,
+    lines: redacted ? [REDACTED_LINE] : lines,
+    redacted,
+    language,
+  };
+};
+
+const prepareHunks = (fileId: string, filename: string, patch: string): PreparedHunk[] => {
+  const language = languageForFile(filename);
+  return splitPatch(patch).map((raw, i) =>
+    toPreparedHunk(`${fileId}.H${i + 1}`, raw.header, raw.lines, language),
+  );
 };
 
 const prepareFile = (
@@ -195,6 +213,7 @@ export const prepareCommits = (commits: CommitDetail[]): PreparedCommit[] =>
   [...commits].reverse().map((commit, i) => {
     const id = `C${i + 1}`;
     return {
+      kind: 'commit',
       id,
       sha: commit.sha,
       htmlUrl: commit.htmlUrl,
@@ -207,6 +226,43 @@ export const prepareCommits = (commits: CommitDetail[]): PreparedCommit[] =>
         .slice(0, MAX_CATALOG_FILES_PER_COMMIT)
         .map((file, fileIndex) => prepareFile(id, fileIndex, file)),
     };
+  });
+
+/**
+ * 직접 입력 코드 → 소스 (입력 순서대로 P1.., 파일 하나 P1.F1, 조각 P1.F1.H1..)
+ * - 커밋 파일과 같은 비밀값·긴 줄·언어 처리를 거친다
+ * - 변경 내역이 아니라 보여 준 코드라 줄 앞 기호는 공백(diff 의 바뀌지 않은 줄)으로 둔다
+ * - MAX_HUNK_LINES 줄 단위로 나눠, 분석이 필요한 부분만 고르게 한다
+ */
+export const prepareSnippets = (inputs: GenerationCodeInput[]): PreparedCommit[] =>
+  inputs.map((input, i) => {
+    const id = `P${i + 1}`;
+    const fileId = `${id}.F1`;
+    const lines = input.code.replace(/\n$/, '').split('\n');
+    const base = {
+      id: fileId,
+      filename: input.name,
+      status: 'provided',
+      additions: lines.length,
+      deletions: 0,
+    };
+    const language = languageForFile(input.name);
+    const hunks: PreparedHunk[] = [];
+    for (let start = 0; start < lines.length; start += MAX_HUNK_LINES) {
+      const chunk = lines.slice(start, start + MAX_HUNK_LINES);
+      hunks.push(
+        toPreparedHunk(
+          `${fileId}.H${hunks.length + 1}`,
+          `@@ ${start + 1}-${start + chunk.length} @@`,
+          chunk.map((line) => ` ${line}`),
+          language,
+        ),
+      );
+    }
+    const file: PreparedFile = isSecretFile(input.name)
+      ? { ...base, body: 'secret', hunks: [] }
+      : { ...base, body: 'included', hunks };
+    return { kind: 'snippet', id, sha: '', htmlUrl: '', message: '', files: [file] };
   });
 
 export const indexHunks = (commits: PreparedCommit[]): Map<string, PreparedHunk> => {

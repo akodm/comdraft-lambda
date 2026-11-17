@@ -9,7 +9,7 @@ import type { LlmClient, OnUsage } from './generation/llm.ts';
 import type { StoredAnalysis } from './generation/stored-analysis.ts';
 import type { CommitDetail } from './github.ts';
 import type { JobContext, JobStore, QuotaReservation } from './jobs.ts';
-import type { Pipeline } from './pipeline.ts';
+import type { Pipeline, PipelineInput } from './pipeline.ts';
 import { createPlaceholderPipeline } from './placeholder-pipeline.ts';
 import { MIN_REMAINING_MS, runJob, type RunJobDependencies } from './run-job.ts';
 
@@ -28,6 +28,7 @@ const CONTEXT: JobContext = {
   repo: 'comdraft',
   clarification: null,
   clarificationAsked: false,
+  codeInputMeta: [],
 };
 
 const commit = (sha: string, message: string): CommitDetail => ({
@@ -164,6 +165,7 @@ const createDependencies = (
     pipeline: createPlaceholderPipeline(),
     filler: createClaudeFiller({ llm: createFillLlm().llm }),
     remainingTimeMs: () => 5 * 60 * 1000,
+    codeInputs: [],
     ...overrides,
   };
 
@@ -639,5 +641,81 @@ describe('runJob (분석 저장)', () => {
     assert.equal(await runJob('job-1', dependencies), 'completed');
     assert.equal(state.status, 'completed');
     assert.equal(reported.length, 1);
+  });
+});
+
+describe('runJob (직접 입력 코드)', () => {
+  const META = [{ name: 'a.ts', lines: 2 }];
+  const INPUTS = [{ name: 'a.ts', code: 'const a = 1;\nconst b = 2;' }];
+
+  // 준비 단계가 받은 입력을 기록하는 파이프라인
+  const recordingPipeline = () => {
+    const received: PipelineInput[] = [];
+    const pipeline: Pipeline = {
+      prepare: async (input) => {
+        received.push(input);
+        return {};
+      },
+      estimate: () => 1,
+      classify: async () => ({}),
+      clarification: () => null,
+      analyze: async () => ({}),
+      write: async () => '# 결과',
+      review: async () => '# 결과',
+    };
+    return { pipeline, received };
+  };
+
+  const withContext = (dependencies: RunJobDependencies, context: Partial<JobContext>) => {
+    dependencies.jobs.loadContext = async () => ({ ...CONTEXT, ...context });
+  };
+
+  it('저장된 이름·줄 수와 같은 코드를 파이프라인에 넘긴다', async () => {
+    const { pipeline, received } = recordingPipeline();
+    const { dependencies, state } = createDependencies({ pipeline, codeInputs: INPUTS });
+    withContext(dependencies, { codeInputMeta: META });
+
+    assert.equal(await runJob('job-1', dependencies), 'completed');
+    assert.equal(state.status, 'completed');
+    assert.deepEqual(received[0].codeInputs, INPUTS);
+  });
+
+  it('코드가 필요한 작업에 코드가 없거나 줄 수가 다르면 Claude 호출 없이 internal 로 실패한다', async () => {
+    for (const codeInputs of [[], [{ name: 'a.ts', code: 'const a = 1;' }]]) {
+      const { pipeline, received } = recordingPipeline();
+      const { dependencies, state } = createDependencies({ pipeline, codeInputs });
+      withContext(dependencies, { codeInputMeta: META });
+
+      assert.equal(await runJob('job-1', dependencies), 'failed');
+      assert.equal(state.errorCode, 'internal');
+      assert.equal(received.length, 0);
+    }
+  });
+
+  it('저장된 메타데이터가 깨졌으면 internal 로 실패한다', async () => {
+    const { pipeline } = recordingPipeline();
+    const { dependencies, state } = createDependencies({ pipeline, codeInputs: INPUTS });
+    withContext(dependencies, { codeInputMeta: null });
+
+    assert.equal(await runJob('job-1', dependencies), 'failed');
+    assert.equal(state.errorCode, 'internal');
+  });
+
+  it('커밋이 없으면 GitHub 을 조회하지 않는다', async () => {
+    const { pipeline, received } = recordingPipeline();
+    let fetched = 0;
+    const { dependencies } = createDependencies({
+      pipeline,
+      codeInputs: INPUTS,
+      fetchCommit: async ({ sha }) => {
+        fetched += 1;
+        return commit(sha, 'x');
+      },
+    });
+    withContext(dependencies, { codeInputMeta: META, commitShas: [] });
+
+    assert.equal(await runJob('job-1', dependencies), 'completed');
+    assert.equal(fetched, 0);
+    assert.deepEqual(received[0].commits, []);
   });
 });

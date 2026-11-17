@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { z } from 'zod';
 import type { CommitDetail } from './github.ts';
-import type { GenerationClarification } from './contract.ts';
+import type { GenerationClarification, GenerationCodeInput } from './contract.ts';
 import type { JobContext } from './jobs.ts';
 import type { PreparedLink } from './generation/links.ts';
 import { estimateJobCost, estimateStages } from './generation/estimate.ts';
@@ -34,6 +34,7 @@ const CONTEXT: JobContext = {
   repo: 'r',
   clarification: null,
   clarificationAsked: false,
+  codeInputMeta: [],
 };
 
 const PATCH = '@@ -1,2 +1,3 @@\n const a = 1;\n-const b = 2;\n+const b = 3;\n+const c = 4;';
@@ -161,6 +162,7 @@ const run = async (
   options: {
     context?: Partial<JobContext>;
     commits?: CommitDetail[];
+    codeInputs?: GenerationCodeInput[];
     fetchLinks?: (urls: string[]) => Promise<PreparedLink[]>;
     remainingTimeMs?: () => number;
   } = {},
@@ -179,6 +181,7 @@ const run = async (
   const input: PipelineInput = {
     context: { ...CONTEXT, ...options.context },
     commits: options.commits ?? COMMITS,
+    codeInputs: options.codeInputs ?? [],
     onUsage: async ({ tokens }) => {
       usage.push(tokens);
     },
@@ -208,6 +211,7 @@ const prepareOnly = async (
   const input: PipelineInput = {
     context: { ...CONTEXT, ...options.context },
     commits: COMMITS,
+    codeInputs: [],
     onUsage: async () => {},
   };
   const prepared = await pipeline.prepare(input);
@@ -307,6 +311,30 @@ describe('createClaudePipeline', () => {
       writes.map(({ call, maxTokens }) => [call, maxTokens]),
       [[stagePlan('haiku', 'write'), 32_000]],
     );
+  });
+
+  it('커밋 없이 직접 입력 코드만으로 소스 조각을 골라 코드 블록을 만든다', async () => {
+    const plan: RawPlan = {
+      ...PLAN,
+      sections: [{ level: 2, heading: '구조', purpose: '코드', hunks: ['P1.F1.H1'], links: [] }],
+    };
+    const analysis: Analysis = {
+      ...ANALYSIS,
+      facts: [{ id: 'F1', section: 0, text: '값을 둔다', evidence: ['P1', 'P1.F1.H1'] }],
+      code: [{ id: 'S1', section: 0, from: 'P1.F1.H1', startLine: 1, endLine: 2, mode: 'after', point: '값' }],
+    };
+    const { llm, parses } = fakeLlm(plan, analysis, MARKDOWN);
+    const { markdown, analyzed } = await run(llm, {
+      context: { commitShas: [], referenceUrls: [], codeInputMeta: [{ name: 'src/a.ts', lines: 2 }] },
+      commits: [],
+      codeInputs: [{ name: 'src/a.ts', code: 'const a = 1;\nconst b = 2;' }],
+      fetchLinks: async () => [],
+    });
+
+    assert.ok(parses[0].user.includes('P1.F1.H1'));
+    assert.ok(parses[1].user.includes('P1.F1.H1'));
+    assert.deepEqual(analyzed.analysis.facts[0].evidence, ['P1', 'P1.F1.H1']);
+    assert.ok(markdown.includes('```ts\nconst a = 1;\nconst b = 2;\n```'));
   });
 
   it('분석 단계에는 기획이 고른 hunk 만 들어간다', async () => {
@@ -417,6 +445,7 @@ describe('createClaudePipeline', () => {
       const input: PipelineInput = {
         context: { ...CONTEXT, ...context },
         commits: COMMITS,
+        codeInputs: [],
         onUsage: async () => {},
       };
       const prepared = await pipeline.prepare(input);
@@ -627,6 +656,7 @@ describe('createClaudePipeline', () => {
       const input: PipelineInput = {
         context: { ...CONTEXT, referenceUrls: [] },
         commits: [{ ...COMMITS[1], files: [{ ...COMMITS[1].files[0], patch }] }],
+        codeInputs: [],
         onUsage: async () => {},
       };
       const prepared = await pipeline.prepare(input);
@@ -800,7 +830,7 @@ describe('createClaudePipeline', () => {
         fetchLinks: async () => LINKS,
         remainingTimeMs: () => left,
       });
-      const input: PipelineInput = { context: CONTEXT, commits: COMMITS, onUsage: async () => {} };
+      const input: PipelineInput = { context: CONTEXT, commits: COMMITS, codeInputs: [], onUsage: async () => {} };
       const prepared = await pipeline.prepare(input);
       const analyzed = await pipeline.analyze(input, await pipeline.classify(input, prepared));
       const markdown = await pipeline.review(input, await pipeline.write(input, analyzed));
@@ -826,7 +856,7 @@ describe('createClaudePipeline', () => {
         fetchLinks: async () => LINKS,
         remainingTimeMs: () => 300_000,
       });
-      const input: PipelineInput = { context: CONTEXT, commits: COMMITS, onUsage: async () => {} };
+      const input: PipelineInput = { context: CONTEXT, commits: COMMITS, codeInputs: [], onUsage: async () => {} };
       const prepared = await pipeline.prepare(input);
       const analyzed = await pipeline.analyze(input, await pipeline.classify(input, prepared));
       const markdown = await pipeline.review(input, await pipeline.write(input, analyzed));
@@ -900,6 +930,7 @@ describe('createClaudePipeline', () => {
       const input: PipelineInput = {
         context: CONTEXT,
         commits: COMMITS,
+        codeInputs: [],
         // 기획·분석·작성 호출은 통과하고 검토 호출(네 번째)에서 던진다
         onUsage: async () => {
           calls += 1;

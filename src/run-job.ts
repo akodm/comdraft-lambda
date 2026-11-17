@@ -1,6 +1,7 @@
-import type { GenerationStatus, GenerationStep } from './contract.ts';
+import type { GenerationCodeInput, GenerationStatus, GenerationStep } from './contract.ts';
 import type { SendSignal } from './broadcast.ts';
 import { GenerationFailure, toGenerationFailure } from './errors.ts';
+import { matchesCodeInputMeta } from './generation/code-input.ts';
 import type { BlankFiller } from './fill.ts';
 import { fetchCommits, type FetchCommit } from './github.ts';
 import type { JobContext, JobStore, QuotaReservation } from './jobs.ts';
@@ -21,6 +22,8 @@ export interface RunJobDependencies<P = unknown, C = unknown, A = unknown, W = u
   remainingTimeMs: () => number;
   // 실패 원인 보고 (Sentry 연동 전까지는 아무것도 하지 않음)
   reportError?: (error: unknown) => void;
+  // 요청 본문으로 받은 직접 입력 코드 (초안 작성에만 쓰고 저장하지 않음)
+  codeInputs: GenerationCodeInput[];
 }
 
 // skipped: 이미 시작했거나 끝난 작업 (중복 호출), cancelled: 진행 중 다른 곳에서 끝남 (시간 초과 등),
@@ -63,6 +66,7 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
     filler,
     remainingTimeMs,
     reportError = () => {},
+    codeInputs,
   }: RunJobDependencies<P, C, A, W>,
 ): Promise<RunJobOutcome> => {
   const started = await jobs.markRunning(jobId);
@@ -113,6 +117,11 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
 
   // 초안 작성: 구분 → (되묻기면 멈춤) → 분석 → 작성 → 검토 (중간에 다른 곳에서 끝났으면 null)
   const runDraft = async (context: JobContext): Promise<DraftRun | null> => {
+    // 받은 코드가 이 작업에 저장된 이름·줄 수와 다르면(없음, 잘못된 재실행) 다른 코드로 쓰지 않도록 멈춘다
+    if (!context.codeInputMeta || !matchesCodeInputMeta(codeInputs, context.codeInputMeta)) {
+      throw new GenerationFailure('internal');
+    }
+
     const input: PipelineInput = {
       context,
       commits: await fetchCommits(fetchCommit, {
@@ -120,6 +129,7 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
         repo: context.repo,
         shas: context.commitShas,
       }),
+      codeInputs,
       onUsage,
       // 분석은 나중의 빈칸 채우기를 돕는 재료라 저장에 실패해도 초안 작성은 계속한다
       onAnalysis: async (analysis) => {

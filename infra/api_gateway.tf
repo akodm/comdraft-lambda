@@ -28,6 +28,20 @@ resource "aws_api_gateway_model" "generation_request" {
     properties = {
       jobId       = { type = "string", minLength = 1, maxLength = 64 }
       githubToken = { type = "string", minLength = 1, maxLength = 512 }
+      # 직접 입력 코드 (src/generation/code-input.ts 의 제한과 같게, 합계 글자 수와 줄 수는 Lambda 가 검사)
+      codeInputs = {
+        type     = "array"
+        maxItems = 5
+        items = {
+          type                 = "object"
+          required             = ["name", "code"]
+          additionalProperties = false
+          properties = {
+            name = { type = "string", minLength = 1, maxLength = 100 }
+            code = { type = "string", minLength = 1, maxLength = 20000 }
+          }
+        }
+      }
     }
   })
 }

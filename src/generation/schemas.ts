@@ -10,8 +10,8 @@ export type BlankKind = (typeof BLANK_KINDS)[number];
 export const CODE_MODES = ['after', 'diff'] as const;
 export type CodeMode = (typeof CODE_MODES)[number];
 
-// 모델이 가리킬 수 있는 근거 번호: 커밋(파일·hunk 포함), 링크, 요청 문구
-export const EVIDENCE_PATTERN = /^(C\d+(\.F\d+\.H\d+)?|L\d+|R)$/;
+// 모델이 가리킬 수 있는 근거 번호: 커밋(C)·직접 입력 소스(P) (파일·hunk 포함), 링크, 요청 문구
+export const EVIDENCE_PATTERN = /^([CP]\d+(\.F\d+\.H\d+)?|L\d+|R)$/;
 
 // 글 길이별 절 수 범위. 구조화 출력 호환을 위해 스키마가 아니라 검증 코드에서 확인한다.
 export const SECTION_RANGE: Record<'short' | 'medium' | 'long', [number, number]> = {

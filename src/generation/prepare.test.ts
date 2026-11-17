@@ -11,6 +11,7 @@ import {
   indexHunks,
   languageForFile,
   prepareCommits,
+  prepareSnippets,
   selectHunks,
   type PreparedHunk,
 } from './prepare.ts';
@@ -216,5 +217,79 @@ describe('languageForFile', () => {
     assert.equal(languageForFile('Gemfile'), 'rb');
     assert.equal(languageForFile('docker/Dockerfile'), 'dockerfile');
     assert.equal(languageForFile('Makefile'), 'makefile');
+  });
+});
+
+describe('prepareSnippets', () => {
+  const code = (count: number) => Array.from({ length: count }, (_, i) => `const v${i} = ${i};`).join('\n');
+
+  it('직접 입력 코드 하나를 소스 P 번호와 파일 하나로 만들고 150줄 단위로 조각을 나눈다', () => {
+    const [source] = prepareSnippets([{ name: 'src/useAuth.ts', code: code(320) }]);
+    assert.equal(source.id, 'P1');
+    assert.equal(source.kind, 'snippet');
+    assert.equal(source.sha, '');
+    assert.equal(source.message, '');
+    assert.equal(source.files.length, 1);
+    const [only] = source.files;
+    assert.equal(only.id, 'P1.F1');
+    assert.equal(only.filename, 'src/useAuth.ts');
+    assert.equal(only.status, 'provided');
+    assert.equal(only.additions, 320);
+    assert.equal(only.body, 'included');
+    assert.deepEqual(
+      only.hunks.map((hunk) => [hunk.id, hunk.lines.length, hunk.header]),
+      [
+        ['P1.F1.H1', MAX_HUNK_LINES, '@@ 1-150 @@'],
+        ['P1.F1.H2', MAX_HUNK_LINES, '@@ 151-300 @@'],
+        ['P1.F1.H3', 20, '@@ 301-320 @@'],
+      ],
+    );
+    // 변경 내역이 아니라 보여 준 코드라 줄 앞 기호는 모두 공백
+    assert.ok(only.hunks.every((hunk) => hunk.lines.every((line) => line.startsWith(' '))));
+    assert.equal(only.hunks[0].lines[0], ' const v0 = 0;');
+    assert.equal(only.hunks[0].language, 'ts');
+  });
+
+  it('여러 코드는 입력 순서대로 P1, P2', () => {
+    const sources = prepareSnippets([
+      { name: 'a.py', code: 'x = 1' },
+      { name: '코드 2', code: 'y' },
+    ]);
+    assert.deepEqual(sources.map((source) => source.id), ['P1', 'P2']);
+    assert.equal(sources[1].files[0].hunks[0].language, 'plaintext');
+  });
+
+  it('비밀값 파일 이름이면 본문을 넘기지 않고, 비밀값이 든 조각은 가린다', () => {
+    const [secretFile] = prepareSnippets([{ name: '.env', code: 'A=1' }]);
+    assert.equal(secretFile.files[0].body, 'secret');
+    assert.equal(secretFile.files[0].hunks.length, 0);
+
+    const [withSecret] = prepareSnippets([
+      { name: 'a.ts', code: `const key = 'AKIAIOSFODNN7EXAMPLE';\nconst ok = 1;` },
+    ]);
+    assert.equal(withSecret.files[0].hunks[0].redacted, true);
+    assert.ok(!withSecret.files[0].hunks[0].lines.join('\n').includes('AKIA'));
+  });
+
+  it('아주 긴 줄이 있는 조각은 본문을 넘기지 않는다', () => {
+    const [source] = prepareSnippets([{ name: 'a.js', code: 'x'.repeat(MAX_HUNK_LINE_CHARS + 1) }]);
+    assert.equal(source.files[0].hunks[0].redacted, true);
+  });
+
+  it('커밋은 kind 가 commit 이고, 조각 색인에 소스 조각도 들어간다', () => {
+    const commits = prepareCommits([commit('a', [file('x.ts', PATCH)])]);
+    assert.equal(commits[0].kind, 'commit');
+    const index = indexHunks([...commits, ...prepareSnippets([{ name: 'a.ts', code: 'x' }])]);
+    assert.ok(index.has('C1.F1.H1'));
+    assert.ok(index.has('P1.F1.H1'));
+  });
+});
+
+describe('languageForFile 의 이름 조회', () => {
+  it('객체 기본 속성 이름(constructor, __proto__, toString)은 언어로 보지 않는다', () => {
+    for (const name of ['constructor', 'a.constructor', '__proto__', 'a.__proto__', 'toString', 'a.hasOwnProperty']) {
+      assert.equal(languageForFile(name), 'plaintext', name);
+    }
+    assert.equal(prepareSnippets([{ name: 'a.constructor', code: 'x' }])[0].files[0].hunks[0].language, 'plaintext');
   });
 });

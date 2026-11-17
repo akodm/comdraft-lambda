@@ -1,4 +1,5 @@
 import type {
+  CodeInputMeta,
   GenerationClarification,
   GenerationErrorCode,
   GenerationJobKind,
@@ -8,6 +9,7 @@ import type {
 } from './contract.ts';
 import type { Database } from './db.ts';
 import { parseJobClarification } from './generation/clarify.ts';
+import { parseCodeInputMeta } from './generation/code-input.ts';
 import type { UsageReport } from './generation/llm.ts';
 import { toModel } from './generation/models.ts';
 import type { ClarifyRequest } from './generation/schemas.ts';
@@ -66,6 +68,8 @@ export interface JobContext {
   clarification: GenerationClarification | null;
   // 되묻기 질문을 이미 저장했는지 (저장 값이 깨져 clarification 이 null 이어도 true, 다시 묻지 않는 기준)
   clarificationAsked: boolean;
+  // 직접 입력 코드의 이름·줄 수 (draft_prompt.code_inputs, 형식이 깨졌으면 null)
+  codeInputMeta: CodeInputMeta[] | null;
 }
 
 export interface JobStore {
@@ -130,8 +134,10 @@ const toUrlList = (value: unknown): string[] => {
 };
 
 // loadContext 조회 행 (빈칸 값은 빈칸 채우기 작업에만 있음)
-interface ContextRow extends Omit<JobContext, 'kind' | 'blank' | 'clarification' | 'model'> {
+interface ContextRow
+  extends Omit<JobContext, 'kind' | 'blank' | 'clarification' | 'model' | 'codeInputMeta'> {
   kind: string;
+  codeInputMeta: unknown;
   model: string | null;
   clarification: unknown;
   blankId: string | null;
@@ -163,6 +169,7 @@ const toContext = (row: ContextRow): JobContext => {
     ...(kind === 'fill' ? { blank: toBlank(row) } : {}),
     clarification: kind === 'draft' ? parseJobClarification(clarification) : null,
     clarificationAsked: kind === 'draft' && row.clarificationAsked,
+    codeInputMeta: parseCodeInputMeta(row.codeInputMeta),
   };
 };
 
@@ -186,6 +193,7 @@ export const createJobStore = (sql: Database): JobStore => ({
         p.blank_id as "blankId", p.blank_question as "blankQuestion",
         p.blank_answer as "blankAnswer", p.blank_context as "blankContext",
         p.clarification, (p.clarification is not null) as "clarificationAsked",
+        p.code_inputs as "codeInputMeta",
         r.owner_login as owner, r.name as repo
       from comdraft.draft_prompt p
       join comdraft.draft d on d.id = p.draft_id

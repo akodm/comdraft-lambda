@@ -20,6 +20,7 @@ const baseHunk = hunk('C1.F1.H1', [' a', '-b', '+c']);
 
 const commits: PreparedCommit[] = [
   {
+    kind: 'commit',
     id: 'C1',
     sha: 'a1b2c3d4e5f6',
     htmlUrl: 'https://github.com/o/r/commit/a1b2c3d4e5f6',
@@ -29,6 +30,7 @@ const commits: PreparedCommit[] = [
     ],
   },
   {
+    kind: 'commit',
     id: 'C2',
     sha: 'ffeeddccbbaa',
     htmlUrl: 'https://github.com/o/r/commit/ffeeddccbbaa',
