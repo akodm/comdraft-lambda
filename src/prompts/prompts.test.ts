@@ -612,6 +612,49 @@ describe('글쓴이 3인칭·글 자기 설명 문장', () => {
   }
 });
 
+describe('명료한 문장 (요점 먼저, 빈 문장, 행위자, 흐린 말)', () => {
+  // AI 글이 읽기 힘든 세 가지 결함: 행위자·행위가 숨은 문장, 흐린 말, 요점이 묻힌 빈 문장
+  // (r13 크론 글: "~가 다음 질문이었다" 로 시작하는 절, "여기까지는 ~ 결과다" 같은 문장)
+  const style = {
+    ko: ['문단은 요점부터 쓴다', '새 사실을 더하지 않는 문장은 쓰지 않는다', '행위자를 주어로, 한 일을 동사로 쓴다', '가리키는 대상이 흐린 말'],
+    en: ['Lead each paragraph with its point', 'Do not write sentences that add no new fact', 'Make the actor the subject and the action the verb', 'Words that point vaguely'],
+  } as const;
+  const opening = {
+    ko: '질문이나 의도만 설명하는 문장으로 절을 시작하지 않는다',
+    en: 'Do not open a section with a sentence that only describes a question or an intention',
+  } as const;
+  const heading = { ko: '명사를 서너 개 잇는 제목', en: 'a heading that strings three or four nouns together' } as const;
+  const review = {
+    ko: ['새 사실을 더하지 않는 문장', '행위자를 숨기고 한 일을 명사로 묻은 문장'],
+    en: ['Sentences that add no new fact', 'hides the actor and buries the action in a noun'],
+  } as const;
+
+  for (const pack of packs) {
+    it(`${pack.locale}: 작성·고쳐 쓰기에 명료한 문장 규칙이 있다`, () => {
+      for (const stage of [pack.write, pack.revise]) {
+        for (const phrase of style[pack.locale]) {
+          assert.ok(stage.system.includes(phrase), `${pack.locale} "${phrase}" 없음`);
+        }
+      }
+      assert.ok(pack.write.system.includes(opening[pack.locale]), `${pack.locale} 절 첫 문장 규칙 없음`);
+    });
+
+    it(`${pack.locale}: 기획은 명사 묶음 제목을 피하고, 실험 글 흐름은 질문을 도입에서 한 번만 구체적으로 쓴다`, () => {
+      assert.ok(pack.plan.system.includes(heading[pack.locale]), `${pack.locale} 제목 규칙 없음`);
+      assert.ok(
+        pack.postType.experiment.includes(pack.locale === 'ko' ? '도입에서 한 번' : 'once in the introduction'),
+        `${pack.locale} 실험 흐름 규칙 없음`,
+      );
+    });
+
+    it(`${pack.locale}: 검토가 빈 문장과 행위자를 숨긴 문장을 문제로 본다`, () => {
+      for (const phrase of review[pack.locale]) {
+        assert.ok(pack.review.system.includes(phrase), `${pack.locale} 검토 "${phrase}" 없음`);
+      }
+    });
+  }
+});
+
 describe('인용 블록 내용', () => {
   // 크론 비교(r11·r12)에서 필수 인용 블록을 "~묶은 것이 이 작업의 핵심이다" 처럼 요청 문장으로 채움
   const rule = {
