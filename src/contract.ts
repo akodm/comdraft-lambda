@@ -5,6 +5,8 @@
  *   (느슨하게만 정리, 앱이 반영할 때 표기 규칙으로 정규화, 빈칸 채우기는 빈 배열)
  */
 
+import { parseCodeInputs } from './generation/code-input.ts';
+
 // 작업 상태 (draft_prompt.status)
 // awaiting_input: 기획이 되물어 작성자의 답을 기다리는 중 (Lambda 는 멈춰 있음)
 export type GenerationStatus = 'queued' | 'running' | 'awaiting_input' | 'completed' | 'failed';
@@ -37,11 +39,26 @@ export const isGenerationModel = (value: unknown): value is GenerationModel =>
 // Lambda 전체 제한 시간 (terraform lambda_timeout_seconds 720초와 같게 유지)
 export const GENERATION_LAMBDA_TIMEOUT_MS = 12 * 60 * 1000;
 
+// 작성자가 커밋과 별도로 직접 넣은 코드 (요청 본문으로만 받고 저장하거나 로그에 남기지 않음)
+export interface GenerationCodeInput {
+  // 표시·파일 이름 (화면이 비어 있으면 "코드 N" 을 넣어 보냄)
+  name: string;
+  code: string;
+}
+
+// draft_prompt.code_inputs: 직접 입력 코드마다 이름과 줄 수만 (코드 원문은 저장하지 않음)
+export interface CodeInputMeta {
+  name: string;
+  lines: number;
+}
+
 // API Gateway → Lambda 요청 본문. 나머지 값은 jobId 로 DB 에서 읽음
 export interface GenerationRequest {
   jobId: string;
   // 사용자 GitHub 토큰 (커밋 상세 조회용, 저장하거나 로그에 남기지 않음)
   githubToken: string;
+  // 직접 입력 코드 (요청 순서, 없으면 빈 배열)
+  codeInputs: GenerationCodeInput[];
 }
 
 // Realtime Broadcast: 채널 이름은 draft_prompt.channel, 이벤트 이름은 고정
@@ -96,17 +113,19 @@ export const parseGenerationRequest = (
     return null;
   }
 
-  const { jobId, githubToken } = event as Record<string, unknown>;
+  const { jobId, githubToken, codeInputs: rawCodeInputs } = event as Record<string, unknown>;
+  const codeInputs = parseCodeInputs(rawCodeInputs);
 
   if (
     typeof jobId !== 'string' ||
     jobId.length === 0 ||
     jobId.length > 64 ||
     typeof githubToken !== 'string' ||
-    githubToken.length === 0
+    githubToken.length === 0 ||
+    !codeInputs
   ) {
     return null;
   }
 
-  return { jobId, githubToken };
+  return { jobId, githubToken, codeInputs };
 };
