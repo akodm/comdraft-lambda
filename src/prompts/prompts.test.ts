@@ -647,6 +647,41 @@ describe('명료한 문장 (요점 먼저, 빈 문장, 행위자, 흐린 말)', 
       );
     });
 
+    it(`${pack.locale}: 검토 패턴이 코드 되풀이·작업 평가 문장을 잡고 코드에서 볼 점은 잡지 않는다`, () => {
+      const samples = {
+        ko: [
+          '위 함수는 입력 코드마다 이름과 줄 수를 꺼내 목록으로 바꾼다.',
+          '위 코드에서는 탈퇴 사용자 삭제를 먼저 실행한다.',
+          '앞의 diff 에서는 ping 크론 항목이 빠진다.',
+          '한도와 초기화 시점이 테이블의 컬럼으로 정의된다는 점이 이 코드의 핵심 구조다.',
+          '예상량으로 먼저 검사하도록 했고, 이 방식을 이 작업의 핵심으로 봤다.',
+        ],
+        en: [
+          'The function above maps each input to its name and line count.',
+          'In the code above, user deletion runs first.',
+          'Defining the limits as table columns is the key idea of this code.',
+          'This made it clear that both the count and the schedule matter.',
+        ],
+      }[pack.locale];
+      const plain = {
+        ko: ['이 함수는 봇 계정을 찾고 사용량 한도를 확인한다.', '코드에서 `step` 변수에 단계 이름을 넣어 실패한 단계를 남긴다.'],
+        en: ['This function looks up the bot account and checks the usage limit.', 'The code stores the step name so a failure reports where it stopped.'],
+      }[pack.locale];
+      for (const sample of samples) {
+        assert.ok(pack.reviewPatterns.some((p) => p.kind === 'flow' && p.pattern.test(sample)), sample);
+      }
+      for (const sentence of plain) {
+        assert.ok(!pack.reviewPatterns.some((p) => p.pattern.test(sentence)), sentence);
+      }
+    });
+
+    it(`${pack.locale}: 기획 제목이 글을 어떻게 쓰는지를 말하지 않게 한다`, () => {
+      assert.ok(
+        pack.plan.system.includes(pack.locale === 'ko' ? '글을 어떻게 쓰는지' : 'how the post is written'),
+        `${pack.locale} 제목 메타 규칙 없음`,
+      );
+    });
+
     it(`${pack.locale}: 검토가 빈 문장과 행위자를 숨긴 문장을 문제로 본다`, () => {
       for (const phrase of review[pack.locale]) {
         assert.ok(pack.review.system.includes(phrase), `${pack.locale} 검토 "${phrase}" 없음`);

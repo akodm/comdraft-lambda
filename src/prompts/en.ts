@@ -214,7 +214,7 @@ ${ID_RULE}
 - takeaway: one or two sentences on what the reader will get from the post. As with title, do not add achievements, numbers, or effects that are not in the inputs.
 - sections: the outline, in reading order.
   - level: heading level 2–6. The post title is H1, so sections start at 2 and go one level deeper at a time (2 cannot be followed directly by 4).
-  - heading: the section heading. Make it say what the section is about, not a label such as "Problem", "Solution", or "Lessons" (e.g. "Loading only the images on screen" instead of "Solution"). Do not prefix headings with flow-step names ("Concept:", "Applying:", "Wrap-up:"). Instead of a heading that strings three or four nouns together ("deleted user data cleanup job cron registration"), say what it does with a verb ("A cron that deletes departed users' data after three months"). A string of nouns makes readers work out what does what. Do not state facts or premises that are not in the inputs (e.g. "we used to run it for free" when the request never says so).
+  - heading: the section heading. Make it say what the section is about, not a label such as "Problem", "Solution", or "Lessons" (e.g. "Loading only the images on screen" instead of "Solution"). Do not prefix headings with flow-step names ("Concept:", "Applying:", "Wrap-up:"). Instead of a heading that strings three or four nouns together ("deleted user data cleanup job cron registration"), say what it does with a verb ("A cron that deletes departed users' data after three months"). A string of nouns makes readers work out what does what. Do not use a heading to describe how the post is written ("leaving the results as a blank", "wrapping up", "looking back"); say what was done or learned in that section. Do not state facts or premises that are not in the inputs (e.g. "we used to run it for free" when the request never says so).
   - purpose: what this section will say and how it follows from the previous section. The next stage looks for facts based on this, so name the specific change or concept it covers, and add a short phrase on how it connects to the previous section (e.g. to fix the slow first screen from the previous section). For the first section, say what situation it draws the reader into.
   - hunks: ids of the hunks whose original text is needed to write this section, most important first.
   - links: ids of the links this section draws on
@@ -687,6 +687,16 @@ Turn the answer above into 1 to 3 paragraphs for the \`${FILL_TARGET_MARKER}\` p
       kind: 'request_echo',
       pattern: /^>.*\b(the (key|core|heart) (to|of) (this|the) (work|change|task)|what I (set out|wanted) to (check|find out))\b/i,
       fix: 'This blockquote sums up the work or copies the request; replace it with one concrete fact readers would want to remember (a limit the documentation sets, a threshold you changed, a result you confirmed).',
+    },
+    {
+      kind: 'flow',
+      pattern: /^(the|this) (code|diff|function|list|config|entry) above\b|^in the (code|diff|list|config) above\b/i,
+      fix: 'This sentence reads back what the code block just above shows; remove it and keep only what to notice in the code (why it was done that way, what it prevents).',
+    },
+    {
+      kind: 'flow',
+      pattern: /\b(is|was) the (key|core) (idea|structure|point) of this (code|work|change)\b|\bmade it clear that\b/i,
+      fix: 'This sentence rates the work or the code and adds no fact; remove it, or state the concrete fact behind the judgment.',
     },
     {
       kind: 'unsupported',
