@@ -1,3 +1,4 @@
+import type { GenerationCodeInput } from './contract.ts';
 import type { CommitDetail } from './github.ts';
 import type { JobContext } from './jobs.ts';
 import { GenerationFailure } from './errors.ts';
@@ -15,6 +16,7 @@ import { stagePlan } from './generation/models.ts';
 import {
   indexHunks,
   prepareCommits,
+  prepareSnippets,
   selectHunks,
   type PreparedCommit,
   type PreparedHunk,
@@ -50,6 +52,8 @@ import { renderCatalog, renderClarification, resolveOptions } from './prompts/re
 export interface PipelineInput {
   context: JobContext;
   commits: CommitDetail[];
+  // 작성자가 직접 넣은 코드 (요청 본문으로만 받음, 커밋 뒤에 P1.. 소스로 붙인다)
+  codeInputs: GenerationCodeInput[];
   // Claude 응답 하나를 받을 때마다 그 사용량(토큰·비용)을 기록
   onUsage: OnUsage;
   // 분석 단계를 마치면 나중의 빈칸 채우기가 쓸 재료를 저장
@@ -161,8 +165,9 @@ export const createClaudePipeline = ({
   remainingTimeMs,
   reportError,
 }: ClaudePipelineDependencies): Pipeline<Prepared, Classified, Analyzed, Written> => ({
-  prepare: async ({ context, commits: details }) => {
-    const commits = prepareCommits(details);
+  prepare: async ({ context, commits: details, codeInputs }) => {
+    // 커밋(C1..) 다음에 직접 입력 소스(P1..): 카탈로그·조각 선택·근거 검증을 같은 구조로 거친다
+    const commits = [...prepareCommits(details), ...prepareSnippets(codeInputs)];
     const hunks = indexHunks(commits);
     const links = await safeFetchLinks(fetchLinks, context.referenceUrls);
     return { commits, hunks, links };

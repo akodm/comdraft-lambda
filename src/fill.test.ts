@@ -34,6 +34,7 @@ const CONTEXT: JobContext = {
   repo: 'r',
   clarification: null,
   clarificationAsked: false,
+  codeInputMeta: [],
   blank: BLANK,
 };
 

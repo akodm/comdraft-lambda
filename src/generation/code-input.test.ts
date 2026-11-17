@@ -7,6 +7,7 @@ import {
   countLines,
   matchesCodeInputMeta,
   normalizeCode,
+  parseCodeInputMeta,
   parseCodeInputs,
 } from './code-input.ts';
 
@@ -64,6 +65,17 @@ describe('parseCodeInputs', () => {
     const atLines = lines(CODE_INPUT_LIMITS.maxLines);
     assert.equal(parseCodeInputs([{ name: 'a', code: atLines }])?.length, 1);
     assert.equal(parseCodeInputs([{ name: 'a', code: 'x'.repeat(CODE_INPUT_LIMITS.maxChars) }])?.length, 1);
+  });
+});
+
+describe('parseCodeInputMeta', () => {
+  it('jsonb 값(배열·문자열)을 이름·줄 수 목록으로 읽고, 형식이 다르면 null', () => {
+    assert.deepEqual(parseCodeInputMeta([]), []);
+    assert.deepEqual(parseCodeInputMeta('[{"name":"a.ts","lines":2}]'), [{ name: 'a.ts', lines: 2 }]);
+    assert.deepEqual(parseCodeInputMeta([{ name: 'a', lines: 1, code: 'x' }]), [{ name: 'a', lines: 1 }]);
+    for (const value of [null, '{', {}, [{ name: 'a', lines: 0 }], [{ name: 'a', lines: 1.5 }], [{ lines: 1 }]]) {
+      assert.equal(parseCodeInputMeta(value), null);
+    }
   });
 });
 

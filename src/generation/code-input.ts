@@ -58,6 +58,29 @@ export const parseCodeInputs = (value: unknown): GenerationCodeInput[] | null =>
   return total > CODE_INPUT_LIMITS.maxTotalChars ? null : inputs;
 };
 
+// draft_prompt.code_inputs (jsonb) → 이름·줄 수 목록. 문자열이면 JSON 으로 읽고, 형식이 다르면 null
+export const parseCodeInputMeta = (value: unknown): CodeInputMeta[] | null => {
+  let parsed = value;
+  if (typeof parsed === 'string') {
+    try {
+      parsed = JSON.parse(parsed);
+    } catch {
+      return null;
+    }
+  }
+
+  if (!Array.isArray(parsed)) return null;
+
+  const meta: CodeInputMeta[] = [];
+  for (const item of parsed) {
+    if (typeof item !== 'object' || item === null) return null;
+    const { name, lines } = item as Record<string, unknown>;
+    if (typeof name !== 'string' || !Number.isInteger(lines) || (lines as number) < 1) return null;
+    meta.push({ name, lines: lines as number });
+  }
+  return meta;
+};
+
 // 받은 코드가 작업에 저장된 이름·줄 수와 순서까지 같은지
 export const matchesCodeInputMeta = (
   inputs: GenerationCodeInput[],

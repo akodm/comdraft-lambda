@@ -73,6 +73,7 @@ export const handler = async (
     // 빈칸 채우기 작업은 GitHub 토큰을 쓰지 않는다
     filler: createClaudeFiller({ llm }),
     remainingTimeMs,
+    codeInputs: request.codeInputs,
   });
 
   return { outcome };

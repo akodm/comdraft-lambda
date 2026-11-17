@@ -45,6 +45,7 @@ const context = (overrides: Partial<JobContext> = {}): JobContext => ({
   repo: 'r',
   clarification: null,
   clarificationAsked: false,
+  codeInputMeta: [],
   ...overrides,
 });
 
@@ -58,6 +59,7 @@ const hunk = (id: string, lines: string[], extra: Partial<PreparedHunk> = {}): P
 });
 
 const commit = (id: string, hunks: PreparedHunk[], message = 'feat: 이미지 지연 로딩'): PreparedCommit => ({
+  kind: 'commit',
   id,
   sha: `${id}sha0000000`,
   htmlUrl: `https://github.com/o/r/commit/${id}`,
