@@ -502,6 +502,44 @@ describe('옵션 조합 비교 2바퀴에서 찾은 규칙', () => {
   }
 });
 
+describe('글쓴이 3인칭·글 자기 설명 문장', () => {
+  // 크론 비교(r11)에서 "글쓴이가 알고 있던 2개 제한", "이 글은 ~ 전제로 진행한다" 가 나옴
+  const rule = {
+    ko: ['3인칭으로 부르지 않고', '글이 자기 자신을 설명하는 문장', '1인칭으로 둘 다 사실대로 쓴다'],
+    en: ['third person', 'the post describes itself', 'write both as facts in the first person'],
+  } as const;
+  const review = { ko: '글이 자기 자신을 설명하는 문장', en: 'the post describes itself' } as const;
+  const samples = {
+    ko: ['이 글은 2개 제한을 전제로 진행한다.', '글쓴이가 알고 있던 2개 제한과 차이가 있다.'],
+    en: ['This post assumes a limit of two.', 'The author knew the limit was two.'],
+  } as const;
+  const plain = {
+    ko: ['링크 작성자의 role 값도 함께 가져온다.', '처음에는 2개까지로 알고 있었는데, 문서는 100개로 적고 있다.'],
+    en: ['The author field is stored with each link.', 'I thought the limit was two, but the documentation lists 100.'],
+  } as const;
+
+  for (const pack of packs) {
+    it(`${pack.locale}: 목소리 규칙을 담는 단계는 글쓴이 3인칭과 글 자기 설명을 막는다`, () => {
+      // 분석은 글 문장을 쓰지 않아 목소리 규칙이 없음
+      for (const stage of [pack.plan, pack.write, pack.review, pack.revise, pack.fill]) {
+        for (const phrase of rule[pack.locale]) {
+          assert.ok(stage.system.includes(phrase), `${pack.locale} "${phrase}" 없음`);
+        }
+      }
+      assert.ok(pack.review.system.includes(review[pack.locale]), `${pack.locale} 검토 voice 설명 없음`);
+    });
+
+    it(`${pack.locale}: 검토 패턴이 글 자기 설명과 글쓴이 3인칭을 잡고 도메인 문장은 잡지 않는다`, () => {
+      for (const sample of samples[pack.locale]) {
+        assert.ok(pack.reviewPatterns.some((p) => p.kind === 'voice' && p.pattern.test(sample)), sample);
+      }
+      for (const sentence of plain[pack.locale]) {
+        assert.ok(!pack.reviewPatterns.some((p) => p.pattern.test(sentence)), sentence);
+      }
+    });
+  }
+});
+
 describe('검토 패턴', () => {
   const SAMPLES = {
     ko: ['정리하면 끝이다.', '이번 작업은 설정과 경로, 로더로 나뉘었어요.', '자세한 이유는 뒤에서 다시 이야기할게요.', '캐시에 둔다고 해요.', '문서를 따른 것으로 보인다.'],
