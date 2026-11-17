@@ -284,3 +284,12 @@ describe('prepareSnippets', () => {
     assert.ok(index.has('P1.F1.H1'));
   });
 });
+
+describe('languageForFile 의 이름 조회', () => {
+  it('객체 기본 속성 이름(constructor, __proto__, toString)은 언어로 보지 않는다', () => {
+    for (const name of ['constructor', 'a.constructor', '__proto__', 'a.__proto__', 'toString', 'a.hasOwnProperty']) {
+      assert.equal(languageForFile(name), 'plaintext', name);
+    }
+    assert.equal(prepareSnippets([{ name: 'a.constructor', code: 'x' }])[0].files[0].hunks[0].language, 'plaintext');
+  });
+});

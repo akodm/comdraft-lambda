@@ -171,6 +171,21 @@ describe('직접 입력 코드', () => {
     assert.equal(laterChanges(sameName).size, 0);
   });
 
+  it('카탈로그가 상한을 넘어도 직접 입력 코드의 조각 줄은 접지 않고 커밋부터 접는다', () => {
+    const many = (id: string) =>
+      Array.from({ length: 80 }, (_, i) =>
+        hunk(`${id}.F1.H${i + 1}`, [], { header: `@@ -1 +1 @@ ${'x'.repeat(300)}` }),
+      );
+    const big = [
+      ...['C1', 'C2', 'C3'].map((id) => commit(id, many(id))),
+      ...prepareSnippets([{ name: 'a.ts', code: 'const a = 1;' }]),
+    ];
+    const text = renderCatalog(big);
+    assert.ok(text.includes('P1.F1.H1 @@ 1-1 @@'));
+    assert.ok(!/P1\.F1 .*\(\+\d+ hunks\)/.test(text));
+    assert.match(text, /C3\.F1 modified .* \[included\] \(\+80 hunks\)/);
+  });
+
   it('기획·분석·작성 지시문이 <snippet> 을 데이터로 다루고 P 번호를 근거로 허용한다', () => {
     const phrases = {
       ko: ['`<snippet>`', 'P1.F1.H1', '변경 내역이 아니라'],

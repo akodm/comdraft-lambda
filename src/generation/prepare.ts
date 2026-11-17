@@ -115,8 +115,14 @@ const extensionOf = (filename: string): string => {
   return dot <= 0 ? '' : base.slice(dot + 1).toLowerCase();
 };
 
+// 객체 자체의 키만 본다 (constructor, __proto__ 같은 기본 속성 이름이 언어로 잡히지 않게)
+const lookup = (table: Record<string, string>, key: string): string | undefined =>
+  Object.hasOwn(table, key) ? table[key] : undefined;
+
 export const languageForFile = (filename: string): string =>
-  LANGUAGES_BY_NAME[filename.split('/').pop() ?? filename] ?? LANGUAGES[extensionOf(filename)] ?? 'plaintext';
+  lookup(LANGUAGES_BY_NAME, filename.split('/').pop() ?? filename) ??
+  lookup(LANGUAGES, extensionOf(filename)) ??
+  'plaintext';
 
 // lock, 빌드 결과물, minified, 스냅샷은 본문을 넘기지 않는다
 const isExcludedFile = (filename: string): boolean => {

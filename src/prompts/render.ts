@@ -128,13 +128,15 @@ const renderCatalogCommit = (commit: PreparedCommit, collapsed: boolean): string
   );
 };
 
-// 커밋별 파일 줄과 hunk `@@` 줄. 상한을 넘으면 가장 최근 커밋(배열 끝, 큰 C 번호)부터 hunk 줄을 생략한다.
+// 커밋별 파일 줄과 hunk `@@` 줄. 상한을 넘으면 가장 최근 커밋(큰 C 번호)부터 hunk 줄을 생략한다 (직접 입력 코드는 그대로).
 export const renderCatalog = (commits: PreparedCommit[]): string => {
   const collapsed = new Set<number>();
   const render = (): string =>
     commits.map((commit, i) => renderCatalogCommit(commit, collapsed.has(i))).join('\n');
   let text = render();
   for (let i = commits.length - 1; i >= 0 && estimateTokens(text) > PLAN_CATALOG_TOKENS; i -= 1) {
+    // 직접 입력 코드는 작성자가 고른 코드이고 줄여도 거의 줄지 않아 접지 않는다
+    if (commits[i].kind === 'snippet') continue;
     collapsed.add(i);
     text = render();
   }
