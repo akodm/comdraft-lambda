@@ -540,6 +540,43 @@ describe('글쓴이 3인칭·글 자기 설명 문장', () => {
   }
 });
 
+describe('인용 블록 내용', () => {
+  // 크론 비교(r11·r12)에서 필수 인용 블록을 "~묶은 것이 이 작업의 핵심이다" 처럼 요청 문장으로 채움
+  const rule = {
+    ko: ['독자가 따로 기억해 둘 만한 사실', '작업이나 글을 평가·요약하는 문장', '요청 안의 인용을 옮기지 않는다'],
+    en: ['a fact readers would want to remember', 'a sentence that rates or sums up the work or the post', 'do not copy a sentence from the request or a quote inside it'],
+  } as const;
+  const review = { ko: '요청 안의 인용을 글의 인용', en: 'a quote inside the request into a blockquote' } as const;
+  const samples = {
+    ko: ['> 크론 수를 늘리는 대신 작업을 주간·월간 주기로 묶은 것이 이 작업의 핵심이다.', '> 크론 개수 제한 안에서 어떤 작업을 남길지가 이번에 확인하려던 질문이었다.'],
+    en: ['> Grouping jobs into weekly and monthly runs was the key to this work.', '> What I set out to check was which jobs to keep.'],
+  } as const;
+  const plain = {
+    ko: ['> Hobby 플랜의 크론은 하루에 한 번만 실행된다.', '이 작업의 핵심은 탈퇴 시각을 기준으로 삼은 것이다.'],
+    en: ['> On the Hobby plan, cron jobs run once a day.', 'The key to this work was using the deletion time.'],
+  } as const;
+
+  for (const pack of packs) {
+    it(`${pack.locale}: 작성·고쳐 쓰기는 인용에 구체적인 사실을 쓰고 요청·요약 문장을 옮기지 않게 한다`, () => {
+      for (const stage of [pack.write, pack.revise]) {
+        for (const phrase of rule[pack.locale]) {
+          assert.ok(stage.system.includes(phrase), `${pack.locale} "${phrase}" 없음`);
+        }
+      }
+      assert.ok(pack.review.system.includes(review[pack.locale]), `${pack.locale} 검토 request_echo 설명 없음`);
+    });
+
+    it(`${pack.locale}: 검토 패턴이 작업을 요약하는 인용을 잡고 사실 인용과 본문 문장은 잡지 않는다`, () => {
+      for (const sample of samples[pack.locale]) {
+        assert.ok(pack.reviewPatterns.some((p) => p.kind === 'request_echo' && p.pattern.test(sample)), sample);
+      }
+      for (const sentence of plain[pack.locale]) {
+        assert.ok(!pack.reviewPatterns.some((p) => p.pattern.test(sentence)), sentence);
+      }
+    });
+  }
+});
+
 describe('검토 패턴', () => {
   const SAMPLES = {
     ko: ['정리하면 끝이다.', '이번 작업은 설정과 경로, 로더로 나뉘었어요.', '자세한 이유는 뒤에서 다시 이야기할게요.', '캐시에 둔다고 해요.', '문서를 따른 것으로 보인다.'],

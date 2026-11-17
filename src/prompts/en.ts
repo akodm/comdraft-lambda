@@ -359,7 +359,7 @@ const LENGTH_STYLE_RULE = `## Length and style
 - Follow the length target. Code and blanks do not count toward it.
 - If facts run short, do not pad with generalities, repetition, or stock phrases. It is fine to come in under the target. Embellished sentences become wrong information for the reader and filler the author has to delete.
 - Follow the options for tone and flow.
-- If list or blockquote is a required block, use it at least once: a list to organize facts, a blockquote to highlight one key \`<fact>\`. A blockquote does not repeat the sentence right before or after it, because readers would read the same thing twice. If blockquote is not a required block, you do not need to use one. Even if code is a required block, include no code when there is no S.`;
+- If list or blockquote is a required block, use it at least once: a list to organize facts, a blockquote to highlight one key \`<fact>\`. In a blockquote, write one sentence that states a fact readers would want to remember (a limit the documentation sets, a threshold you changed, a result you confirmed) in concrete terms. Do not write a sentence that rates or sums up the work or the post, such as "… was the key to this work" or "what I set out to check was …", and do not copy a sentence from the request or a quote inside it. A blockquote is the first thing readers notice, so such a sentence makes the post read like an answer to the request. A blockquote does not repeat the sentence right before or after it, because readers would read the same thing twice. If blockquote is not a required block, you do not need to use one. Even if code is a required block, include no code when there is no S.`;
 
 const WRITE_SYSTEM = `You write the draft of a single technical blog post for developers, in Markdown. The draft is built by planning, analysis, and writing, in that order, and this writing step is the third. The finished draft then goes through a review and is revised if problems are found. The earlier stages have organized, per section, the facts confirmed from the inputs, the code to show, and the blanks for the author to fill in. Your job is to weave this material into one story the reader can follow, without adding new facts. Readers will take this post as fact, so do not make up anything plausible; leave out what has no evidence.
 
@@ -398,7 +398,7 @@ const reviewKindText: Record<ReviewKind, string> = {
   unknown_term:
     'An internal name with no explanation: a function, variable, type, file path, or internal module name used only inside this project appears in the text without saying what it does. Public APIs, configuration keys, CLI commands, standard terms, and names explained the first time they appear are not problems. Write the fix toward removing the name or describing it by what it does; do not ask to add a name that is not in the draft.',
   request_echo:
-    "The request's sentences or wording were copied as they are, or request content that does not fit the post was put in, such as instructions, format or length requirements, or content unrelated to the topic.",
+    "The request's sentences or wording were copied as they are, or request content that does not fit the post was put in, such as instructions, format or length requirements, or content unrelated to the topic. Copying a sentence from the request or a quote inside the request into a blockquote (`>`), or filling a blockquote with a sentence that sums up the work (\"… was the key to this work\"), is also this problem.",
   link_context:
     'A fact with a link says the work followed a document, but the draft writes it as an approach the author came up with alone. Or a link attached to a fact never appears in the text as `{{link:…}}`, so it is left only in the references. Do not decide that the work followed a document from relation alone. Conversely, a draft that says "followed the document" or "the same approach" when the fact says the work differs from the document, or does not say it followed it, is also this problem.',
   unsupported:
@@ -673,6 +673,11 @@ Turn the answer above into 1 to 3 paragraphs for the \`${FILL_TARGET_MARKER}\` p
       kind: 'voice',
       pattern: /\b(the (author|writer) (knew|thought|assumed|expected|believed)|this post (assumes|covers|explores|proceeds))\b/i,
       fix: 'This sentence has the post describe itself or refers to the author in the third person; write only the facts in the author\'s first person (e.g. "I thought it was …, but the documentation lists …").',
+    },
+    {
+      kind: 'request_echo',
+      pattern: /^>.*\b(the (key|core|heart) (to|of) (this|the) (work|change|task)|what I (set out|wanted) to (check|find out))\b/i,
+      fix: 'This blockquote sums up the work or copies the request; replace it with one concrete fact readers would want to remember (a limit the documentation sets, a threshold you changed, a result you confirmed).',
     },
     {
       kind: 'unsupported',
