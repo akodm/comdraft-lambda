@@ -2,9 +2,11 @@
 
 **[comdraft](https://github.com/akodm/comdraft) 의 AI 초안 작성 Lambda 와 AWS 인프라 (Terraform)**
 
-서비스: **[comdraft.vercel.app](https://comdraft.vercel.app)** · 웹 앱: [akodm/comdraft](https://github.com/akodm/comdraft)
+서비스: **[comdraft.dev](https://comdraft.dev)** · 웹 앱: [akodm/comdraft](https://github.com/akodm/comdraft)
 
 comdraft 사용자가 커밋을 고르고 작성 요청을 보내면, 이 Lambda 가 GitHub 에서 커밋 상세를 읽고 Claude 로 기술 블로그 초안을 씁니다. 결과와 진행 상황은 DB 와 Supabase Realtime 으로 comdraft 화면에 전달됩니다.
+
+> **comdraft-lambda** is the serverless AI writing pipeline behind [comdraft](https://comdraft.dev). An AWS Lambda behind API Gateway reads GitHub commits and diffs (plus pasted code snippets), then runs a multi-stage Claude pipeline (plan → analyze → write → review) to produce a technical blog draft in Markdown. Infrastructure is managed with Terraform, and Claude is called through Workload Identity Federation with no API key.
 
 ## 하는 일
 
@@ -13,17 +15,17 @@ Next.js 서버 (comdraft) ──SigV4──▶ API Gateway (REST, IAM 인증, �
                                       │ 비동기(Event) 호출, 즉시 202
                                       ▼
                                Lambda (Node.js 22, 이 저장소)
-                                 준비 → 예상량 검사 → 기획 → 분석 → 작성 → 조립 (Claude Haiku 5.5)
+                                 준비 → 예상량 검사 → 기획 → 분석 → 작성 → 검토·조립 (Claude Haiku·Sonnet·Opus 5.5)
                                  단계마다 DB(draft_prompt) 갱신 + Supabase Realtime Broadcast
 ```
 
-1. **준비**: GitHub 에서 커밋 상세와 코드 변경을 가져오고, 비밀 파일은 빼고 비밀값은 가립니다. 참고 링크는 SSRF 방어를 거쳐 직접 가져옵니다.
+1. **준비**: GitHub 에서 커밋 상세와 코드 변경을 가져오고, 비밀 파일은 빼고 비밀값은 가립니다. 사용자가 직접 입력한 코드는 가상 커밋(`P1`, `P1.F1.H1`)으로 바꿔 커밋과 같은 방식으로 다룹니다(실행하지 않고 텍스트로만 씀). 참고 링크는 SSRF 방어를 거쳐 직접 가져옵니다.
 2. **예상량 검사**: 준비한 입력으로 사용할 토큰을 추정하고, 사용자의 주간 할당량(`quota_plan`)을 넘으면 Claude 를 부르지 않고 거부합니다. 같은 사용자의 동시 요청은 DB 잠금으로 줄 세웁니다.
-3. **기획 → 분석 → 작성**: Claude Haiku 5.5(`claude-haiku-5-5`)로 글의 구조를 잡고, 코드 변경을 분석하고, 본문을 씁니다. 호출마다 실제 사용 토큰을 기록합니다.
-4. **조립**: 코드, 참고 링크, 빈칸을 모델 출력 대신 원문으로 바꿔 넣고, 모델이 직접 쓴 링크와 HTML 은 무력화합니다.
+3. **기획 → 분석 → 작성**: 사용자가 고른 모델(Haiku·Sonnet·Opus)로 글의 구조를 잡고 본문을 씁니다. 분석 단계는 항상 Haiku 로 코드 변경을 분석합니다. 정보가 부족하면 기획 단계에서 되묻기 질문을 만들고 멈춥니다. 호출마다 실제 사용 토큰을 기록합니다.
+4. **검토·조립**: 독자 기준으로 점검해 필요할 때만 고쳐 쓰고, 코드, 참고 링크, 빈칸을 모델 출력 대신 원문으로 바꿔 넣습니다. 모델이 직접 쓴 링크와 HTML 은 무력화합니다.
 
-- 커밋 코드와 참고 링크 본문은 메모리에서만 쓰고 DB, 로그 어디에도 저장하지 않습니다.
-- 사용하지 않는 AWS 서비스: Step Functions, VPC, CloudWatch Logs(실행 역할에 `logs:*` 권한 없음), SQS/SNS
+- 커밋 코드, 직접 입력 코드, 참고 링크 본문은 메모리에서만 쓰고 DB, 로그 어디에도 저장하지 않습니다.
+- 사용하지 않는 AWS 서비스: Step Functions, VPC, CloudWatch Logs(실행 역할에 `logs:*` 권한 없음), SQS (SNS 는 comdraft 의 일일 현황 보고 메일에만 씀)
 - 요청/신호 형식과 오류 코드는 comdraft 의 `lib/generation/contract.ts` 와 이 저장소의 `src/contract.ts` 를 같게 유지합니다.
 
 ## 기술 스택
@@ -31,7 +33,7 @@ Next.js 서버 (comdraft) ──SigV4──▶ API Gateway (REST, IAM 인증, �
 | 영역 | 사용 기술 |
 | --- | --- |
 | 런타임 | Node.js 22, TypeScript (esbuild 로 단일 번들) |
-| AI | Anthropic SDK, Claude Haiku 5.5, Workload Identity Federation (API 키 없음) |
+| AI | Anthropic SDK, Claude Haiku·Sonnet·Opus 5.5, Workload Identity Federation (API 키 없음) |
 | 데이터 | Supabase Postgres (`postgres`), Supabase Realtime Broadcast |
 | 날짜 | dayjs (할당량 주 경계, Asia/Seoul) |
 | 인프라 | AWS API Gateway, Lambda, IAM, Terraform |
@@ -42,7 +44,7 @@ Next.js 서버 (comdraft) ──SigV4──▶ API Gateway (REST, IAM 인증, �
 ```text
 src/handler.ts       Lambda 진입점
 src/run-job.ts       작업 한 건 실행 (상태 갱신, 할당량 예약, 실패 처리)
-src/pipeline.ts      준비 → 기획 → 분석 → 작성 → 조립
+src/pipeline.ts      준비 → 기획 → 분석 → 작성 → 검토·조립
 src/generation/      커밋 준비, 링크 수집, 비밀값 처리, 예상량, Claude 호출, 조립
 src/prompts/         단계별 프롬프트 (한국어·영어)
 src/jobs.ts          작업 저장소 (DB)
