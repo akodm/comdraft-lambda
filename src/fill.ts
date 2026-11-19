@@ -5,7 +5,7 @@ import type { LlmClient, OnUsage } from './generation/llm.ts';
 import { stagePlan } from './generation/models.ts';
 import type { StoredAnalysis } from './generation/stored-analysis.ts';
 import type { JobBlank, JobContext } from './jobs.ts';
-import { getPromptPack } from './prompts/index.ts';
+import type { PromptPack } from './prompts/index.ts';
 
 /**
  * 빈칸 채우기 (kind='fill'): 글쓴이의 짧은 답을 그 빈칸 자리에 들어갈 문단 1~3개로 다듬는다
@@ -15,6 +15,8 @@ import { getPromptPack } from './prompts/index.ts';
 
 export interface FillInput {
   context: JobContext;
+  // 작업 시작 때 한 번 만든 프롬프트 묶음 (어드민 수정본 반영)
+  pack: PromptPack;
   blank: JobBlank;
   // 같은 초안의 최근 완료된 초안 작성 작업이 저장한 분석 (없으면 본문과 답만으로 다듬음)
   analysis: StoredAnalysis | null;
@@ -32,8 +34,7 @@ export interface BlankFiller {
 // 다듬기는 짧은 글이라 출력 상한만 사고 토큰을 감안해 넉넉하게 (모델·사고 깊이는 작업 모델로 stagePlan 이 정함)
 export const FILL_MAX_TOKENS = 8_000;
 
-const buildPrompt = ({ context, blank, analysis }: FillInput) => {
-  const pack = getPromptPack(context.locale);
+const buildPrompt = ({ context, pack, blank, analysis }: FillInput) => {
   return { system: pack.fill.system, user: pack.fill.user({ context, blank, analysis }) };
 };
 

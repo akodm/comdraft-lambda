@@ -38,7 +38,7 @@ import {
 } from './generation/schemas.ts';
 import { toStoredAnalysis, type StoredAnalysis } from './generation/stored-analysis.ts';
 import { missingHeadingLevels, validateAnalysis, validatePlan } from './generation/validate.ts';
-import { getPromptPack } from './prompts/index.ts';
+import type { PromptPack } from './prompts/index.ts';
 import { renderCatalog, renderClarification, resolveOptions } from './prompts/render.ts';
 
 /**
@@ -51,6 +51,8 @@ import { renderCatalog, renderClarification, resolveOptions } from './prompts/re
 
 export interface PipelineInput {
   context: JobContext;
+  // 작업 시작 때 한 번 만든 프롬프트 묶음 (어드민 수정본 반영, 모든 단계가 같은 묶음을 씀)
+  pack: PromptPack;
   commits: CommitDetail[];
   // 작성자가 직접 넣은 코드 (요청 본문으로만 받음, 커밋 뒤에 P1.. 소스로 붙인다)
   codeInputs: GenerationCodeInput[];
@@ -134,8 +136,10 @@ const safeFetchLinks = async (
 };
 
 // 예상량 계산: 실제로 보낼 system 프롬프트·카탈로그·링크 본문과 가리지 않은 hunk 본문을 잰다
-const estimatePrepared = (context: JobContext, { commits, hunks, links }: Prepared): number => {
-  const pack = getPromptPack(context.locale);
+const estimatePrepared = (
+  { context, pack }: PipelineInput,
+  { commits, hunks, links }: Prepared,
+): number => {
   const sum = (texts: string[]) => texts.reduce((total, text) => total + estimateTokens(text), 0);
 
   const stages = estimateStages(
@@ -173,10 +177,9 @@ export const createClaudePipeline = ({
     return { commits, hunks, links };
   },
 
-  estimate: ({ context }, prepared) => estimatePrepared(context, prepared),
+  estimate: (input, prepared) => estimatePrepared(input, prepared),
 
-  classify: async ({ context, onUsage }, prepared) => {
-    const pack = getPromptPack(context.locale);
+  classify: async ({ context, pack, onUsage }, prepared) => {
     const { commits, hunks, links } = prepared;
 
     const planContext = {
@@ -227,8 +230,7 @@ export const createClaudePipeline = ({
 
   clarification: ({ plan }) => plan.clarify,
 
-  analyze: async ({ context, onUsage, onAnalysis }, classified) => {
-    const pack = getPromptPack(context.locale);
+  analyze: async ({ context, pack, onUsage, onAnalysis }, classified) => {
     const { commits, hunks, links, plan } = classified;
     // 모델이 본 hunk 만 근거로 인정하도록 고른 것만 넘기고 검증한다
     const selected = selectHunks(
@@ -262,8 +264,7 @@ export const createClaudePipeline = ({
 
   tags: (analyzed) => analyzed.analysis.tags,
 
-  write: async ({ context, onUsage }, analyzed) => {
-    const pack = getPromptPack(context.locale);
+  write: async ({ context, pack, onUsage }, analyzed) => {
     const { commits, links, plan, analysis } = analyzed;
     // 코드 선택은 분석 단계에서 본 hunk 안에서만 나오므로 같은 집합을 쓴다
     const selected = new Map(
@@ -286,8 +287,7 @@ export const createClaudePipeline = ({
     return { ...analyzed, draft, selected };
   },
 
-  review: async ({ context, onUsage }, written) => {
-    const pack = getPromptPack(context.locale);
+  review: async ({ context, pack, onUsage }, written) => {
     const { commits, links, plan, analysis, selected } = written;
     // 검토 quote 가 초안에서 찾아지도록 작성이 감싼 바깥 펜스를 먼저 푼다
     const draft = unwrapOuterFence(written.draft);

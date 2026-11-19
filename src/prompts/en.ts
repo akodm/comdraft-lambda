@@ -23,7 +23,7 @@ import {
   resolveOptions,
   tagRequest,
 } from './render.ts';
-import type { PromptPack, ReviewPromptInput } from './types.ts';
+import type { OptionTables, PromptPack, ReviewPromptInput } from './types.ts';
 
 /**
  * 영어 프롬프트
@@ -131,7 +131,7 @@ const list = <K extends string>(entries: Record<K, string>): string =>
 
 const blankLimitText = (count: number): string => `at most ${count} blank${count === 1 ? '' : 's'}`;
 
-const OPTION_TABLE = `## Options
+const optionTable = ({ tone, postType, length, requiredBlocks }: OptionTables): string => `## Options
 Tone (tone)
 ${list(tone)}
 
@@ -150,7 +150,10 @@ Required blocks (requiredBlocks)
 ${list(requiredBlocks)}`;
 
 // 사용자 입력에 넣는 옵션 줄. 알 수 없는 값은 기본값으로 바뀐다.
-const optionLines = (context: JobContext): string => {
+const optionLines = (
+  { tone, postType, length, requiredBlocks }: OptionTables,
+  context: JobContext,
+): string => {
   const options = resolveOptions(context);
   const [min, max] = length[options.length].sections;
   const blocks = options.requiredBlocks.length
@@ -183,7 +186,7 @@ const CLARIFY_RULE = `## Clarifying questions (clarify)
 - Even when asking, plan title, takeaway, and sections as usual. The output format requires every field, and once the author answers, the post is planned again with the answer, so this outline is not used.
 - Write reason, question, and options in English.`;
 
-const PLAN_SYSTEM = `You plan the outline of a single technical blog post for developers. The draft is built by planning, analysis, and writing, in that order, and this planning step is the first. The next stage reads the original text of the hunks you choose and extracts facts, and the writing stage writes the post from those facts alone. Hunks you do not choose here are invisible to later stages, so do not leave out the changes that show what the post is about.
+const planSystem = (tables: OptionTables): string => `You plan the outline of a single technical blog post for developers. The draft is built by planning, analysis, and writing, in that order, and this planning step is the first. The next stage reads the original text of the hunks you choose and extracts facts, and the writing stage writes the post from those facts alone. Hunks you do not choose here are invisible to later stages, so do not leave out the changes that show what the post is about.
 
 ${DATA_RULE}
 
@@ -245,7 +248,7 @@ ${CLARIFY_RULE}
 - Write one linkRoles entry for every input link. Decide role by reading the link's body. Write in relation only what the link's body and the commit messages, file lines, and hunk lines confirm; do not guess. The next stage looks for facts based on relation, so a guessed relation makes work that did not follow a document look as if it did. Also add a link with a relation to the links of the section that covers that part.
 - Write title, takeaway, heading, purpose, reason, and relation in English.
 
-${OPTION_TABLE}`;
+${optionTable(tables)}`;
 
 const ANALYZE_SYSTEM = `You prepare the material for a technical blog post draft for developers. The draft is built by planning, analysis, and writing, in that order, and this analysis is the second. For each section of the planned outline, you pick the facts the inputs confirm and the location of code to show. Across the whole post, you pick only the few blanks the author must be asked. The writing stage may only put into the post the facts you list. A wrong fact here becomes an error in the post, and presenting something without evidence as fact misleads the reader. When you are not sure, do not state it as a fact; leave it out. Blanks go only in the few places the blank rules allow.
 
@@ -370,7 +373,7 @@ const LENGTH_STYLE_RULE = `## Length and style
 - Words that point vaguely ("the relevant part", "the processing logic", "the same result", "this context") should name what they mean. Use the words developers in that field actually use, and do not coin unusual word combinations.
 - If list or blockquote is a required block, use it at least once: a list to organize facts, a blockquote to highlight one key \`<fact>\`. In a blockquote, write one sentence that states a fact readers would want to remember (a limit the documentation sets, a threshold you changed, a result you confirmed) in concrete terms. Do not write a sentence that rates or sums up the work or the post, such as "… was the key to this work" or "what I set out to check was …", and do not copy a sentence from the request or a quote inside it. A blockquote is the first thing readers notice, so such a sentence makes the post read like an answer to the request. A blockquote does not repeat the sentence right before or after it, because readers would read the same thing twice. If blockquote is not a required block, you do not need to use one. Even if code is a required block, include no code when there is no S.`;
 
-const WRITE_SYSTEM = `You write the draft of a single technical blog post for developers, in Markdown. The draft is built by planning, analysis, and writing, in that order, and this writing step is the third. The finished draft then goes through a review and is revised if problems are found. The earlier stages have organized, per section, the facts confirmed from the inputs, the code to show, and the blanks for the author to fill in. Your job is to weave this material into one story the reader can follow, without adding new facts. Readers will take this post as fact, so do not make up anything plausible; leave out what has no evidence.
+const writeSystem = (tables: OptionTables): string => `You write the draft of a single technical blog post for developers, in Markdown. The draft is built by planning, analysis, and writing, in that order, and this writing step is the third. The finished draft then goes through a review and is revised if problems are found. The earlier stages have organized, per section, the facts confirmed from the inputs, the code to show, and the blanks for the author to fill in. Your job is to weave this material into one story the reader can follow, without adding new facts. Readers will take this post as fact, so do not make up anything plausible; leave out what has no evidence.
 
 ${DATA_RULE}
 
@@ -400,7 +403,7 @@ ${MARKDOWN_RULE}
 
 ${LENGTH_STYLE_RULE}
 
-${OPTION_TABLE}`;
+${optionTable(tables)}`;
 
 // 검토가 찾는 문제 종류의 뜻 (검토 system 의 종류 표)
 const reviewKindText: Record<ReviewKind, string> = {
@@ -450,7 +453,7 @@ ${list(reviewKindText)}
 - If the same problem appears in several places, list each place separately, but do not use the same quote twice.
 - If there are no problems, return issues as an empty list. For a well-written draft, an empty list is the right result. Do not hunt for problems to fill a count.`;
 
-const REVISE_SYSTEM = `You revise a draft of a technical blog post for developers. The draft was built by planning, analysis, and writing, in that order, and a review stage found the places to fix by the reader rules and left them as a list. This revision is the last step. Fix only the listed problems and write out the whole draft again with everything else left as it is. Readers will take this post as fact, so do not add new facts while revising.
+const reviseSystem = (tables: OptionTables): string => `You revise a draft of a technical blog post for developers. The draft was built by planning, analysis, and writing, in that order, and a review stage found the places to fix by the reader rules and left them as a list. This revision is the last step. Fix only the listed problems and write out the whole draft again with everything else left as it is. Readers will take this post as fact, so do not add new facts while revising.
 
 ${DATA_RULE}
 
@@ -487,7 +490,7 @@ ${MARKDOWN_RULE}
 
 ${LENGTH_STYLE_RULE}
 
-${OPTION_TABLE}`;
+${optionTable(tables)}`;
 
 // 작성자가 되묻기 질문에 답한 맥락. 답한 쌍이 없으면(처음 실행, 그냥 작성) 블록을 넣지 않는다
 const clarificationBlock = (context: JobContext): string => {
@@ -496,7 +499,10 @@ const clarificationBlock = (context: JobContext): string => {
 };
 
 // 검토와 고쳐 쓰기 입력이 함께 쓰는 앞부분: 옵션, 요청, 작성자 맥락, 글 재료, 참고 링크, 초안
-const reviewMaterial = ({ context, plan, analysis, hunks, links, draft }: ReviewPromptInput): string => `${optionLines(context)}
+const reviewMaterial = (
+  tables: OptionTables,
+  { context, plan, analysis, hunks, links, draft }: ReviewPromptInput,
+): string => `${optionLines(tables, context)}
 
 ## Request
 ${tagRequest(context.prompt)}${clarificationBlock(context)}
@@ -510,7 +516,7 @@ ${links.length ? renderLinkTitles(links, plan.linkRoles) : NONE}
 ## Draft
 ${renderDraft(draft)}`;
 
-const FILL_SYSTEM = `You fill in one blank in a draft of a technical blog post for developers. When the draft was written, places that could not be known from the inputs were left as blanks with a question for the author, and the author has answered that question briefly. You turn the answer into the paragraphs that go in that place in the body. The system keeps the rest of the body as it is, so write only the paragraphs for this place. Readers trust this post as fact, so do not invent plausible details that are not in the answer.
+const fillSystem = ({ tone }: OptionTables): string => `You fill in one blank in a draft of a technical blog post for developers. When the draft was written, places that could not be known from the inputs were left as blanks with a question for the author, and the author has answered that question briefly. You turn the answer into the paragraphs that go in that place in the body. The system keeps the rest of the body as it is, so write only the paragraphs for this place. Readers trust this post as fact, so do not invent plausible details that are not in the answer.
 
 ${DATA_RULE}
 
@@ -546,7 +552,7 @@ Tone (tone)
 ${list(tone)}`;
 
 // 빈칸 채우기 입력의 옵션 줄 (문체와 결과 언어만 쓴다)
-const fillOptionLines = (context: JobContext): string => {
+const fillOptionLines = ({ tone }: OptionTables, context: JobContext): string => {
   const options = resolveOptions(context);
   return `## Options
 - Output language: English
@@ -574,18 +580,18 @@ const retryNote = ({ kind, placeholders }: RevisionProblem): string => `## Why t
 The previous revision could not be used because of the problem below. This time, fix only the listed problems without it.
 - ${retryReason[kind]}${placeholders.length ? `\n- Placeholders involved: ${placeholders.join(', ')}` : ''}`;
 
-export const en: PromptPack = {
+const build = (tables: OptionTables): PromptPack => ({
   locale: 'en',
   dataRuleMarker,
   voiceRuleMarker,
   readerRuleMarker,
   clarifyRuleMarker,
   plan: {
-    system: PLAN_SYSTEM,
+    system: planSystem(tables),
     user: ({ context, commits, links, missingLevels }) => `## Request
 ${tagRequest(context.prompt)}${clarificationBlock(context)}
 
-${optionLines(context)}
+${optionLines(tables, context)}
 
 ## Commit catalog
 ${orNone(renderCatalog(commits))}
@@ -600,7 +606,7 @@ Plan the outline of the post from the inputs above.`,
     user: ({ context, plan, commits, hunks, links }) => `## Request
 ${tagRequest(context.prompt)}${clarificationBlock(context)}
 
-${optionLines(context)}
+${optionLines(tables, context)}
 
 ## Plan
 ${renderPlan(plan, new Set(hunks.map((hunk) => hunk.id)))}
@@ -617,8 +623,8 @@ ${orNone(renderLinks(links, { preview: false, roles: plan.linkRoles }))}
 For each section of the plan above, list the facts, code locations, and blanks.`,
   },
   write: {
-    system: WRITE_SYSTEM,
-    user: ({ context, plan, analysis, hunks, links }) => `${optionLines(context)}${clarificationBlock(context)}
+    system: writeSystem(tables),
+    user: ({ context, plan, analysis, hunks, links }) => `${optionLines(tables, context)}${clarificationBlock(context)}
 
 ## Post material
 ${renderOutline(plan, analysis, hunks)}
@@ -630,13 +636,13 @@ Write the draft in Markdown from the material above. The first line is \`# title
   },
   review: {
     system: REVIEW_SYSTEM,
-    user: (input) => `${reviewMaterial(input)}
+    user: (input) => `${reviewMaterial(tables, input)}
 
 Review the draft above by the reader rules and list only what needs fixing. If nothing needs fixing, return an empty list.`,
   },
   revise: {
-    system: REVISE_SYSTEM,
-    user: (input) => `${reviewMaterial(input)}
+    system: reviseSystem(tables),
+    user: (input) => `${reviewMaterial(tables, input)}
 
 ## Problems to fix
 ${renderIssues(input.issues)}
@@ -644,8 +650,8 @@ ${input.retry ? `\n${retryNote(input.retry)}\n` : ''}
 Write the whole draft in Markdown with only the problems above fixed. The first line is \`# title\`.`,
   },
   fill: {
-    system: FILL_SYSTEM,
-    user: ({ context, blank, analysis }) => `${fillOptionLines(context)}
+    system: fillSystem(tables),
+    user: ({ context, blank, analysis }) => `${fillOptionLines(tables, context)}
 
 ## Current body
 ${renderFillContext(blank.context)}
@@ -661,10 +667,8 @@ ${renderFillAnswer(blank.answer)}
 
 Turn the answer above into 1 to 3 paragraphs for the \`${FILL_TARGET_MARKER}\` place in the body.`,
   },
-  tone,
-  postType,
-  length,
-  requiredBlocks,
+  ...tables,
+  rebuild: build,
   blankDefaults,
   referencesHeading: 'References',
   reviewPatterns: [
@@ -704,4 +708,6 @@ Turn the answer above into 1 to 3 paragraphs for the \`${FILL_TARGET_MARKER}\` p
       fix: 'Remove the guessing wording and state it as the material says, or remove the sentence if there is no evidence.',
     },
   ],
-};
+});
+
+export const en = build({ tone, postType, length, requiredBlocks });

@@ -76,6 +76,14 @@ interface Stage<I> {
   user: (input: I) => string;
 }
 
+// 어드민이 고칠 수 있는 표 네 개 (system·옵션 줄이 이 표를 읽어 만들어지므로 바꾸면 묶음을 다시 만든다)
+export interface OptionTables {
+  tone: Record<Tone, string>;
+  postType: Record<PostType, string>;
+  length: Record<Length, { sections: [number, number]; blanks: number; target: string }>;
+  requiredBlocks: Record<RequiredBlock, string>;
+}
+
 // 로케일별 프롬프트 묶음. 로케일을 추가할 때는 이 타입을 채운 파일 하나만 더한다.
 export interface PromptPack {
   locale: JobLocale;
@@ -96,14 +104,13 @@ export interface PromptPack {
   revise: Stage<RevisePromptInput>;
   // 빈칸 하나를 글쓴이 답으로 다듬는 단계 (초안 작성과 별개의 작업)
   fill: Stage<FillPromptInput>;
-  // 문체 지시
-  tone: Record<Tone, string>;
-  // 글의 흐름 (독자를 이끌어 가는 순서)
-  postType: Record<PostType, string>;
-  // 절 수 범위, 글 전체 빈칸 상한, 본문 분량
-  length: Record<Length, { sections: [number, number]; blanks: number; target: string }>;
-  // 필수 블록을 글에 어떻게 반영할지
-  requiredBlocks: Record<RequiredBlock, string>;
+  // 문체 지시, 글의 흐름(독자를 이끌어 가는 순서), 절 수 범위·글 전체 빈칸 상한·본문 분량, 필수 블록 반영 방식
+  tone: OptionTables['tone'];
+  postType: OptionTables['postType'];
+  length: OptionTables['length'];
+  requiredBlocks: OptionTables['requiredBlocks'];
+  // 같은 로케일의 묶음을 다른 표로 다시 만든다 (표가 들어가는 system·옵션 줄까지 따라 바뀜, system 수정본은 지워지므로 다시 얹어야 함)
+  rebuild: (tables: OptionTables) => PromptPack;
   // ask 가 비었을 때 기본 문구
   blankDefaults: Record<BlankKind, string>;
   // 글 끝에 붙이는 참고 절 제목

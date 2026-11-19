@@ -82,6 +82,8 @@ export interface JobStore {
   // 시작 검사: service_setting 의 ai_generation.paused 와 작업 주인의 banned_at 을 한 번에 확인 (작업 행이 없으면 ok)
   checkAdmission: (jobId: string) => Promise<Admission>;
   loadContext: (jobId: string) => Promise<JobContext | null>;
+  // 어드민이 저장한 프롬프트 수정본 (해당 로케일 것만, 검사는 읽는 쪽 applyOverrides 가 함)
+  loadPromptOverrides: (locale: JobLocale) => Promise<{ key: string; content: string }[]>;
   // 진행 단계 갱신 (running 인 작업만, 그 사이 끝났으면 false)
   markStep: (jobId: string, step: GenerationStep) => Promise<boolean>;
   // 결과와 분석이 고른 기술 태그를 저장하고 완료 (running 인 작업만)
@@ -213,6 +215,11 @@ export const createJobStore = (sql: Database): JobStore => ({
 
     return row?.banned ? 'user_banned' : 'ok';
   },
+
+  loadPromptOverrides: async (locale) =>
+    sql<{ key: string; content: string }[]>`
+      select key, content from comdraft.ai_prompt where locale = ${locale}
+    `,
 
   loadContext: async (jobId) => {
     const [row] = await sql<ContextRow[]>`

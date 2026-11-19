@@ -71,6 +71,7 @@ const input = (overrides: Partial<FillInput> = {}): FillInput & { usage: number[
   const usage: number[] = [];
   return {
     context: CONTEXT,
+    pack: getPromptPack(CONTEXT.locale),
     blank: BLANK,
     analysis: ANALYSIS,
     onUsage: async ({ tokens }) => {
@@ -147,7 +148,7 @@ describe('createClaudeFiller', () => {
 
   it('로케일 en 이면 en 프롬프트를 쓴다', async () => {
     const { llm, writes } = fakeLlm('It took about three seconds.');
-    await createClaudeFiller({ llm }).fill(input({ context: { ...CONTEXT, locale: 'en' } }));
+    await createClaudeFiller({ llm }).fill(input({ context: { ...CONTEXT, locale: 'en' }, pack: getPromptPack('en') }));
 
     assert.equal(writes[0].system, getPromptPack('en').fill.system);
   });

@@ -7,6 +7,8 @@ import { fetchCommits, type FetchCommit } from './github.ts';
 import type { JobContext, JobStore, QuotaReservation } from './jobs.ts';
 import type { UsageReport } from './generation/llm.ts';
 import type { Pipeline, PipelineInput } from './pipeline.ts';
+import { getPromptPack, type PromptPack } from './prompts/index.ts';
+import { applyOverrides } from './prompts/overrides.ts';
 
 // 다음 단계를 시작하기 위해 남아 있어야 하는 실행 시간 (부족하면 스스로 실패 처리 후 종료)
 export const MIN_REMAINING_MS = 30_000;
@@ -97,14 +99,38 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
 
   const onUsage = (usage: UsageReport) => jobs.addUsage(jobId, usage);
 
+  // 작업의 프롬프트 묶음: 어드민 수정본을 한 번 읽어 얹는다
+  // 수정본은 생성을 멈추게 할 수 없으므로 읽기에 실패하면 기본 묶음으로 계속하고,
+  // 보고에는 키 이름과 오류만 남긴다 (프롬프트 문장은 남기지 않음)
+  const loadPack = async (context: JobContext): Promise<PromptPack> => {
+    const base = getPromptPack(context.locale);
+
+    try {
+      const { pack, rejected } = applyOverrides(
+        base,
+        await jobs.loadPromptOverrides(context.locale),
+      );
+
+      if (rejected.length > 0) {
+        reportError(new Error(`rejected prompt overrides: ${rejected.join(', ')}`));
+      }
+
+      return pack;
+    } catch (error) {
+      reportError(error);
+      return base;
+    }
+  };
+
   // 빈칸 채우기: 결과 Markdown 문단
-  const runFill = async (context: JobContext): Promise<string> => {
+  const runFill = async (context: JobContext, pack: PromptPack): Promise<string> => {
     if (!context.blank) {
       throw new GenerationFailure('internal');
     }
 
     const input = {
       context,
+      pack,
       blank: context.blank,
       analysis: await jobs.loadLatestAnalysis(jobId),
       onUsage,
@@ -116,7 +142,7 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
   };
 
   // 초안 작성: 구분 → (되묻기면 멈춤) → 분석 → 작성 → 검토 (중간에 다른 곳에서 끝났으면 null)
-  const runDraft = async (context: JobContext): Promise<DraftRun | null> => {
+  const runDraft = async (context: JobContext, pack: PromptPack): Promise<DraftRun | null> => {
     // 받은 코드가 이 작업에 저장된 이름·줄 수와 다르면(없음, 잘못된 재실행) 다른 코드로 쓰지 않도록 멈춘다
     if (!context.codeInputMeta || !matchesCodeInputMeta(codeInputs, context.codeInputMeta)) {
       throw new GenerationFailure('internal');
@@ -124,6 +150,7 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
 
     const input: PipelineInput = {
       context,
+      pack,
       commits: await fetchCommits(fetchCommit, {
         owner: context.owner,
         repo: context.repo,
@@ -192,11 +219,13 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
       throw new GenerationFailure('internal');
     }
 
+    const pack = await loadPack(context);
+
     const run: DraftRun | null =
       context.kind === 'fill'
         ? // 빈칸 채우기는 태그를 고르지 않음 (앱도 빈칸 결과로 태그를 바꾸지 않음)
-          { kind: 'result', markdown: await runFill(context), tags: [] }
-        : await runDraft(context);
+          { kind: 'result', markdown: await runFill(context, pack), tags: [] }
+        : await runDraft(context, pack);
 
     if (run === null) {
       return 'cancelled';
