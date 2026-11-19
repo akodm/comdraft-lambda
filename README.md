@@ -20,10 +20,11 @@ Next.js 서버 (comdraft) ──SigV4──▶ API Gateway (REST, IAM 인증, �
 ```
 
 1. **준비**: GitHub 에서 커밋 상세와 코드 변경을 가져오고, 비밀 파일은 빼고 비밀값은 가립니다. 사용자가 직접 입력한 코드는 가상 커밋(`P1`, `P1.F1.H1`)으로 바꿔 커밋과 같은 방식으로 다룹니다(실행하지 않고 텍스트로만 씀). 참고 링크는 SSRF 방어를 거쳐 직접 가져옵니다.
-2. **예상량 검사**: 준비한 입력으로 사용할 토큰을 추정하고, 사용자의 주간 할당량(`quota_plan`)을 넘으면 Claude 를 부르지 않고 거부합니다. 같은 사용자의 동시 요청은 DB 잠금으로 줄 세웁니다.
-3. **기획 → 분석 → 작성**: 사용자가 고른 모델(Haiku·Sonnet·Opus)로 글의 구조를 잡고 본문을 씁니다. 분석 단계는 항상 Haiku 로 코드 변경을 분석합니다. 정보가 부족하면 기획 단계에서 되묻기 질문을 만들고 멈춥니다. 호출마다 실제 사용 토큰을 기록합니다.
+2. **허용 확인·예상량 검사**: 먼저 AI 작성 중지·사용자 밴 여부를 확인해, 해당하면 Claude 를 부르지 않고 실패 처리합니다(`service_paused`, `user_banned`). 이어서 준비한 입력으로 사용할 토큰을 추정하고, 사용자의 주간 할당량(`quota_plan`, 집계는 `quota_reset_at` 이후 사용량만)을 넘으면 Claude 를 부르지 않고 거부합니다. 같은 사용자의 동시 요청은 DB 잠금으로 줄 세웁니다.
+3. **기획 → 분석 → 작성**: 사용자가 고른 모델(Haiku·Sonnet·Opus)로 글의 구조를 잡고 본문을 씁니다. 분석 단계는 항상 Haiku 로 코드 변경을 분석합니다. 정보가 부족하면 기획 단계에서 되묻기 질문을 만들고 멈춥니다. 호출마다 실제 사용 토큰을 기록합니다. 선택된 프롬프트 팩에는 어드민이 `ai_prompt` 에 저장한 수정본이 적용되고, 필수 문자열이 빠진 수정본은 무시합니다.
 4. **검토·조립**: 독자 기준으로 점검해 필요할 때만 고쳐 쓰고, 코드, 참고 링크, 빈칸을 모델 출력 대신 원문으로 바꿔 넣습니다. 모델이 직접 쓴 링크와 HTML 은 무력화합니다.
 
+- DB 접근: `service_setting`(AI 중지), `ai_prompt`(프롬프트 수정본), `user.banned_at`·`user.quota_reset_at` 을 읽고, 콜드 스타트 때 프롬프트 기본값을 `ai_prompt_default` 에 올립니다(쓰기).
 - 커밋 코드, 직접 입력 코드, 참고 링크 본문은 메모리에서만 쓰고 DB, 로그 어디에도 저장하지 않습니다.
 - 사용하지 않는 AWS 서비스: Step Functions, VPC, CloudWatch Logs(실행 역할에 `logs:*` 권한 없음), SQS (SNS 는 comdraft 의 일일 현황 보고 메일에만 씀)
 - 요청/신호 형식과 오류 코드는 comdraft 의 `lib/generation/contract.ts` 와 이 저장소의 `src/contract.ts` 를 같게 유지합니다.
@@ -120,7 +121,7 @@ Anthropic 인증은 API 키 없이 **Workload Identity Federation** 을 씀. Lam
 
 comdraft 와 함께 바뀌는 변경은 아래 순서를 지킵니다.
 
-1. comdraft 의 DB 마이그레이션을 로컬과 운영에 적용
+1. comdraft 의 DB 마이그레이션을 로컬과 운영에 적용 (어드민 콘솔 기능은 0026 이 먼저 적용돼 있어야 Lambda 가 새 테이블·열을 읽고 `ai_prompt_default` 를 쓸 수 있음)
 2. comdraft(Next.js) 배포: Lambda 가 읽는 작업 기록(예: `draft_prompt.reference_urls`)을 새 코드가 먼저 쓰도록 **Lambda 보다 먼저**
 3. `pnpm build` 후 `infra` 에서 `terraform apply` 로 Lambda 배포
 
