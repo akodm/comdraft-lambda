@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import {
   getJobUsage,
   getQuotaWeek,
+  getUsageWindowStart,
   isWithinAllowance,
   type QuotaPlan,
 } from './quota.ts';
@@ -81,5 +82,27 @@ describe('getJobUsage', () => {
     assert.equal(usage('completed', 50_000, 42_000, null), 42_000);
     assert.equal(usage('failed', 90_000, 0, 'quota_exceeded'), 0);
     assert.equal(usage('failed', 50_000, 7_000, 'llm_failed'), 7_000);
+  });
+});
+
+describe('getUsageWindowStart', () => {
+  const weekStart = new Date('2026-11-14T15:00:00Z');
+
+  it('초기화 시점이 주 시작보다 늦으면 초기화 시점', () => {
+    assert.deepEqual(
+      getUsageWindowStart(weekStart, new Date('2026-11-18T03:00:00Z')),
+      new Date('2026-11-18T03:00:00Z'),
+    );
+  });
+
+  it('초기화 시점이 주 시작보다 이르면 주 시작', () => {
+    assert.deepEqual(
+      getUsageWindowStart(weekStart, new Date('2026-11-10T03:00:00Z')),
+      weekStart,
+    );
+  });
+
+  it('초기화한 적 없으면 주 시작', () => {
+    assert.deepEqual(getUsageWindowStart(weekStart, null), weekStart);
   });
 });

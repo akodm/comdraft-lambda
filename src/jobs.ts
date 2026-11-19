@@ -20,6 +20,7 @@ import {
 import {
   getJobUsage,
   getQuotaWeek,
+  getUsageWindowStart,
   isWithinAllowance,
   type QuotaPlan,
 } from './quota.ts';
@@ -72,9 +73,14 @@ export interface JobContext {
   codeInputMeta: CodeInputMeta[] | null;
 }
 
+// 작업 시작 검사 결과: ok 가 아니면 시작하지 않고 그 코드로 실패 (AI 중지가 밴보다 우선)
+export type Admission = 'ok' | 'service_paused' | 'user_banned';
+
 export interface JobStore {
   // queued → running (이미 시작했거나 끝난 작업이면 null)
   markRunning: (jobId: string) => Promise<{ channel: string } | null>;
+  // 시작 검사: service_setting 의 ai_generation.paused 와 작업 주인의 banned_at 을 한 번에 확인 (작업 행이 없으면 ok)
+  checkAdmission: (jobId: string) => Promise<Admission>;
   loadContext: (jobId: string) => Promise<JobContext | null>;
   // 진행 단계 갱신 (running 인 작업만, 그 사이 끝났으면 false)
   markStep: (jobId: string, step: GenerationStep) => Promise<boolean>;
@@ -101,6 +107,8 @@ export type QuotaReservation = 'reserved' | 'exceeded' | 'no_plan';
 // 작업 → 사용자 → 정책 조회 결과 (postgres 는 numeric 을 문자열로 돌려줌)
 interface PlanRow {
   role: string;
+  // 어드민이 사용량을 초기화한 시각 (없으면 null)
+  quotaResetAt: Date | null;
   weeklyCostLimit: number | string;
   overrunRatio: string;
   resetTimezone: string;
@@ -185,6 +193,27 @@ export const createJobStore = (sql: Database): JobStore => ({
     return row ?? null;
   },
 
+  checkAdmission: async (jobId) => {
+    // 설정 행이 없거나 값이 깨졌으면 중지가 아닌 것으로 본다 (comdraft 의 파서와 같은 fail-open)
+    const [row] = await sql<{ paused: boolean; banned: boolean }[]>`
+      select (s.value ->> 'paused' = 'true') as paused,
+        (u.banned_at is not null) as banned
+      from comdraft.draft_prompt p
+      left join comdraft."user" u on u.id = coalesce(p.user_id, (
+        select d.user_id from comdraft.draft d where d.id = p.draft_id
+      ))
+      left join comdraft.service_setting s
+        on s.key = 'ai_generation' and jsonb_typeof(s.value) = 'object'
+      where p.id = ${jobId}
+    `;
+
+    if (row?.paused) {
+      return 'service_paused';
+    }
+
+    return row?.banned ? 'user_banned' : 'ok';
+  },
+
   loadContext: async (jobId) => {
     const [row] = await sql<ContextRow[]>`
       select p.kind, p.model, p.prompt, p.tone, p.post_type as "postType", p.length,
@@ -258,7 +287,7 @@ export const createJobStore = (sql: Database): JobStore => ({
       await tx`select pg_advisory_xact_lock(hashtext(${owner.userId}))`;
 
       const [row] = await tx<PlanRow[]>`
-        select q.role,
+        select q.role, u.quota_reset_at as "quotaResetAt",
           q.weekly_cost_limit as "weeklyCostLimit",
           q.overrun_ratio as "overrunRatio",
           q.reset_timezone as "resetTimezone",
@@ -284,13 +313,16 @@ export const createJobStore = (sql: Database): JobStore => ({
       // 작업은 실행 시각이 아니라 만들어진 시각이 속한 주에 들어감 (주 경계 직전에 요청하고 직후에 실행돼도 같은 주)
       const week = getQuotaWeek(owner.createdAt, plan);
 
+      // 사용량 초기화가 있었으면 그 시점부터만 셈
+      const windowStart = getUsageWindowStart(week.start, row.quotaResetAt);
+
       // 그 주에 이 사용자가 만든 다른 작업 사용량 (이 작업은 제외)
       const others = await tx<UsageRow[]>`
         select p.status, p.estimated_cost as "estimatedCost",
           p.used_cost as "usedCost", p.error_code as "errorCode"
         from comdraft.draft_prompt p
         where p.user_id = ${owner.userId}
-          and p.created_at >= ${week.start}
+          and p.created_at >= ${windowStart}
           and p.created_at < ${week.resetsAt}
           and p.id <> ${jobId}
       `;

@@ -177,9 +177,15 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
     };
   };
 
-  await notify('running');
-
   try {
+    // 시작 검사: AI 중지나 사용자 밴이면 GitHub·Claude 호출과 사용량 예약 없이 바로 실패
+    const admission = await jobs.checkAdmission(jobId);
+
+    if (admission !== 'ok') {
+      throw new GenerationFailure(admission);
+    }
+
+    await notify('running');
     const context = await jobs.loadContext(jobId);
 
     if (!context) {

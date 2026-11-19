@@ -8,7 +8,7 @@ import { createClaudeFiller } from './fill.ts';
 import type { LlmClient, OnUsage } from './generation/llm.ts';
 import type { StoredAnalysis } from './generation/stored-analysis.ts';
 import type { CommitDetail } from './github.ts';
-import type { JobContext, JobStore, QuotaReservation } from './jobs.ts';
+import type { Admission, JobContext, JobStore, QuotaReservation } from './jobs.ts';
 import type { Pipeline, PipelineInput } from './pipeline.ts';
 import { createPlaceholderPipeline } from './placeholder-pipeline.ts';
 import { MIN_REMAINING_MS, runJob, type RunJobDependencies } from './run-job.ts';
@@ -42,6 +42,7 @@ const commit = (sha: string, message: string): CommitDetail => ({
 const createMemoryJobs = (
   initialStatus = 'queued',
   reservation: QuotaReservation = 'reserved',
+  admission: Admission = 'ok',
 ) => {
   const state = {
     status: initialStatus,
@@ -68,6 +69,7 @@ const createMemoryJobs = (
       state.status = 'running';
       return { channel: 'channel-uuid' };
     },
+    checkAdmission: async () => admission,
     loadContext: async () => CONTEXT,
     markStep: async (_jobId, step) => {
       if (state.status !== 'running') {
@@ -151,8 +153,13 @@ const createDependencies = (
   overrides: Partial<RunJobDependencies> = {},
   initialStatus?: string,
   reservation?: QuotaReservation,
+  admission?: Admission,
 ) => {
-  const { jobs, state, pauseCalls } = createMemoryJobs(initialStatus, reservation);
+  const { jobs, state, pauseCalls } = createMemoryJobs(
+    initialStatus,
+    reservation,
+    admission,
+  );
   const signals: GenerationBroadcastPayload[] = [];
 
   const dependencies: RunJobDependencies = {
@@ -358,6 +365,33 @@ describe('runJob', () => {
       assert.equal(state.estimatedCost, null);
     });
   });
+
+  for (const code of ['service_paused', 'user_banned'] as const) {
+    it(`${code} 이면 GitHub·Claude 호출과 사용량 예약 없이 ${code} 로 실패한다`, async () => {
+      const { stages, pipeline } = createUsagePipeline({ classify: 1, analyze: 1, write: 1 });
+      let commitCalls = 0;
+      const { dependencies, state, signals } = createDependencies(
+        {
+          pipeline,
+          fetchCommit: async ({ sha }) => {
+            commitCalls += 1;
+            return commit(sha, 'x');
+          },
+        },
+        undefined,
+        undefined,
+        code,
+      );
+
+      assert.equal(await runJob('job-1', dependencies), 'failed');
+      assert.equal(state.status, 'failed');
+      assert.equal(state.errorCode, code);
+      assert.equal(state.estimatedCost, null);
+      assert.equal(commitCalls, 0);
+      assert.deepEqual(stages, []);
+      assert.equal(signals.at(-1)?.status, 'failed');
+    });
+  }
 
   it('작업의 초안이 삭제돼 맥락이 없으면 Claude 호출 없이 internal 로 실패한다', async () => {
     const { pipeline, stages } = createUsagePipeline({ classify: 1_000, analyze: 2_000, write: 3_000 });

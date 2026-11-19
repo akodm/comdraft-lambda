@@ -69,3 +69,15 @@ export const getJobUsage = (job: QuotaJob): number => {
 
   return job.usedCost;
 };
+
+/**
+ * 이번 주 사용량을 세기 시작하는 시각
+ * - 어드민이 사용량을 초기화했으면 주 시작과 초기화 시각 중 늦은 쪽 (comdraft lib/generation/quota.ts 와 같은 기준)
+ */
+export const getUsageWindowStart = (
+  weekStart: Date,
+  quotaResetAt: Date | null,
+): Date =>
+  quotaResetAt && quotaResetAt.getTime() > weekStart.getTime()
+    ? quotaResetAt
+    : weekStart;
