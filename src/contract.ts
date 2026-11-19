@@ -82,7 +82,11 @@ export type GenerationErrorCode =
   | 'quota_exceeded'
   // 작성자가 질문 카드에서 취소
   | 'cancelled'
-  | 'internal';
+  | 'internal'
+  // 어드민이 AI 작성을 중지해 시작하지 않음 (사용량 차감 없음)
+  | 'service_paused'
+  // 작업 주인이 이용 제한(밴) 상태라 시작하지 않음 (사용량 차감 없음)
+  | 'user_banned';
 
 // 작성 전 되묻기: 기획이 던진 질문 하나 (보기가 없으면 직접 입력만)
 export interface GenerationClarificationQuestion {

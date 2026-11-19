@@ -23,7 +23,7 @@ import {
   resolveOptions,
   tagRequest,
 } from './render.ts';
-import type { PromptPack, ReviewPromptInput } from './types.ts';
+import type { OptionTables, PromptPack, ReviewPromptInput } from './types.ts';
 
 /**
  * 한국어 프롬프트
@@ -129,7 +129,7 @@ const list = <K extends string>(entries: Record<K, string>): string =>
     .map(([key, value]) => `- ${key}: ${value}`)
     .join('\n');
 
-const OPTION_TABLE = `## 옵션 해석
+const optionTable = ({ tone, postType, length, requiredBlocks }: OptionTables): string => `## 옵션 해석
 문체 (tone)
 ${list(tone)}
 
@@ -148,7 +148,10 @@ ${Object.entries(length)
 ${list(requiredBlocks)}`;
 
 // 사용자 입력에 넣는 옵션 줄. 알 수 없는 값은 기본값으로 바뀐다.
-const optionLines = (context: JobContext): string => {
+const optionLines = (
+  { tone, postType, length, requiredBlocks }: OptionTables,
+  context: JobContext,
+): string => {
   const options = resolveOptions(context);
   const [min, max] = length[options.length].sections;
   const blocks = options.requiredBlocks.length
@@ -181,7 +184,7 @@ const CLARIFY_RULE = `## 되묻기 판단 (clarify)
 - 묻더라도 title, takeaway, sections 는 평소처럼 기획한다. 출력 형식이 모든 필드를 요구하고, 작성자가 답하면 그 답으로 다시 기획하므로 이 목차는 쓰이지 않는다.
 - reason, question, options 는 한국어로 쓴다.`;
 
-const PLAN_SYSTEM = `너는 개발자가 읽는 기술 블로그 글 한 편의 목차를 기획한다. 초안은 기획, 분석, 작성 순서로 만들어지고, 이 기획이 첫 단계다. 다음 단계는 네가 고른 hunk 의 원문을 읽고 사실을 정리하며, 작성 단계는 그 사실만으로 글을 쓴다. 여기서 고르지 않은 hunk 는 뒤 단계에서 볼 수 없으므로, 글의 주제를 보여 주는 변경을 빠뜨리지 않는다.
+const planSystem = (tables: OptionTables): string => `너는 개발자가 읽는 기술 블로그 글 한 편의 목차를 기획한다. 초안은 기획, 분석, 작성 순서로 만들어지고, 이 기획이 첫 단계다. 다음 단계는 네가 고른 hunk 의 원문을 읽고 사실을 정리하며, 작성 단계는 그 사실만으로 글을 쓴다. 여기서 고르지 않은 hunk 는 뒤 단계에서 볼 수 없으므로, 글의 주제를 보여 주는 변경을 빠뜨리지 않는다.
 
 ${DATA_RULE}
 
@@ -243,7 +246,7 @@ ${CLARIFY_RULE}
 - 입력 링크마다 linkRoles 를 하나씩 쓴다. role 은 링크 본문을 읽고 정한다. relation 은 링크 본문과 커밋 메시지, 파일·hunk 줄로 확인되는 것만 쓰고 짐작하지 않는다. 다음 단계가 relation 을 보고 사실을 찾으므로, 짐작한 관계는 문서대로 하지 않은 작업을 문서대로 한 것처럼 만든다. 관계가 있는 링크는 그 부분을 다루는 절의 links 에도 넣는다.
 - title, takeaway, heading, purpose, reason, relation 은 한국어로 쓴다.
 
-${OPTION_TABLE}`;
+${optionTable(tables)}`;
 
 const ANALYZE_SYSTEM = `너는 개발자가 읽는 기술 블로그 초안의 재료를 정리한다. 초안은 기획, 분석, 작성 순서로 만들어지고, 이 분석이 두 번째 단계다. 기획된 목차의 절마다 입력에서 확인되는 사실과 보여 줄 코드의 위치를 고른다. 빈칸은 글 전체에서 글쓴이에게 꼭 물어야 할 몇 개만 고른다. 작성 단계는 네가 정리한 사실만 글로 옮길 수 있다. 여기서 틀린 사실은 그대로 글의 오류가 되고, 근거 없는 내용을 사실로 넣으면 독자를 속이게 된다. 확실하지 않은 내용은 사실로 쓰지 않고 뺀다. 빈칸은 빈칸 규칙에 맞는 몇 곳에만 둔다.
 
@@ -368,7 +371,7 @@ const LENGTH_STYLE_RULE = `## 분량과 문체
 - 가리키는 대상이 흐린 말("해당", "관련 부분", "처리 로직", "같은 결과", "이 문맥")은 무엇인지 구체적으로 쓴다. 그 분야 개발자가 실제로 쓰는 말을 쓰고, 일상에서 쓰지 않는 단어 조합을 새로 만들지 않는다.
 - 필수 블록에 list 나 blockquote 가 있으면 한 번 이상 쓴다. 목록은 사실을 정리할 때, 인용은 핵심 \`<fact>\` 하나를 강조할 때 쓴다. 인용에는 독자가 따로 기억해 둘 만한 사실(문서가 정한 제한, 바꾼 기준값, 확인한 결과)을 구체적으로 적은 문장 하나를 쓴다. "~가 이 작업의 핵심이다", "~가 이번에 확인하려던 질문이었다" 처럼 작업이나 글을 평가·요약하는 문장으로 쓰지 않고, 요청의 문장이나 요청 안의 인용을 옮기지 않는다. 인용은 글에서 가장 먼저 눈에 띄는 자리라, 그런 문장을 두면 요청에 답하는 글로 읽힌다. 인용은 바로 앞뒤 문장을 되풀이하지 않는다. 같은 말을 두 번 읽게 되기 때문이다. 필수 블록에 blockquote 가 없으면 인용을 쓰지 않아도 된다. 필수 블록에 code 가 있어도 S 가 없으면 코드를 넣지 않는다.`;
 
-const WRITE_SYSTEM = `너는 개발자가 읽는 기술 블로그 글 한 편의 초안을 Markdown 으로 쓴다. 초안은 기획, 분석, 작성 순서로 만들어지고, 이 작성이 세 번째 단계다. 다 쓴 초안은 검토를 거쳐, 문제가 있으면 고쳐 쓴다. 앞 단계가 입력에서 확인한 사실, 보여 줄 코드, 글쓴이가 채울 빈칸을 절마다 정리해 두었다. 너는 이 재료를 독자가 따라 읽는 한 편의 이야기로 엮을 뿐 새 사실을 더하지 않는다. 독자는 이 글을 사실로 믿고 읽으므로, 그럴듯한 내용을 지어내지 말고 근거 없는 내용은 뺀다.
+const writeSystem = (tables: OptionTables): string => `너는 개발자가 읽는 기술 블로그 글 한 편의 초안을 Markdown 으로 쓴다. 초안은 기획, 분석, 작성 순서로 만들어지고, 이 작성이 세 번째 단계다. 다 쓴 초안은 검토를 거쳐, 문제가 있으면 고쳐 쓴다. 앞 단계가 입력에서 확인한 사실, 보여 줄 코드, 글쓴이가 채울 빈칸을 절마다 정리해 두었다. 너는 이 재료를 독자가 따라 읽는 한 편의 이야기로 엮을 뿐 새 사실을 더하지 않는다. 독자는 이 글을 사실로 믿고 읽으므로, 그럴듯한 내용을 지어내지 말고 근거 없는 내용은 뺀다.
 
 ${DATA_RULE}
 
@@ -398,7 +401,7 @@ ${MARKDOWN_RULE}
 
 ${LENGTH_STYLE_RULE}
 
-${OPTION_TABLE}`;
+${optionTable(tables)}`;
 
 // 검토가 찾는 문제 종류의 뜻 (검토 system 의 종류 표)
 const reviewKindText: Record<ReviewKind, string> = {
@@ -448,7 +451,7 @@ ${list(reviewKindText)}
 - 같은 문제가 여러 곳에 있으면 곳마다 따로 적되, 같은 quote 를 두 번 쓰지 않는다.
 - 문제가 없으면 issues 를 빈 목록으로 낸다. 잘 쓴 초안에는 빈 목록이 맞는 결과다. 개수를 채우려고 문제를 찾아내지 않는다.`;
 
-const REVISE_SYSTEM = `너는 개발자가 읽는 기술 블로그 초안을 고쳐 쓴다. 초안은 기획, 분석, 작성 순서로 만들어졌고, 검토 단계가 독자 기준으로 고칠 곳을 찾아 목록으로 남겼다. 이 고쳐 쓰기가 마지막 단계다. 너는 목록의 문제만 고치고 나머지는 그대로 둔 초안 전체를 다시 쓴다. 독자는 이 글을 사실로 믿고 읽으므로, 고치면서 새 사실을 더하지 않는다.
+const reviseSystem = (tables: OptionTables): string => `너는 개발자가 읽는 기술 블로그 초안을 고쳐 쓴다. 초안은 기획, 분석, 작성 순서로 만들어졌고, 검토 단계가 독자 기준으로 고칠 곳을 찾아 목록으로 남겼다. 이 고쳐 쓰기가 마지막 단계다. 너는 목록의 문제만 고치고 나머지는 그대로 둔 초안 전체를 다시 쓴다. 독자는 이 글을 사실로 믿고 읽으므로, 고치면서 새 사실을 더하지 않는다.
 
 ${DATA_RULE}
 
@@ -485,7 +488,7 @@ ${MARKDOWN_RULE}
 
 ${LENGTH_STYLE_RULE}
 
-${OPTION_TABLE}`;
+${optionTable(tables)}`;
 
 // 작성자가 되묻기 질문에 답한 맥락. 답한 쌍이 없으면(처음 실행, 그냥 작성) 블록을 넣지 않는다
 const clarificationBlock = (context: JobContext): string => {
@@ -494,7 +497,10 @@ const clarificationBlock = (context: JobContext): string => {
 };
 
 // 검토와 고쳐 쓰기 입력이 함께 쓰는 앞부분: 옵션, 요청, 작성자 맥락, 글 재료, 참고 링크, 초안
-const reviewMaterial = ({ context, plan, analysis, hunks, links, draft }: ReviewPromptInput): string => `${optionLines(context)}
+const reviewMaterial = (
+  tables: OptionTables,
+  { context, plan, analysis, hunks, links, draft }: ReviewPromptInput,
+): string => `${optionLines(tables, context)}
 
 ## 요청
 ${tagRequest(context.prompt)}${clarificationBlock(context)}
@@ -508,7 +514,7 @@ ${links.length ? renderLinkTitles(links, plan.linkRoles) : NONE}
 ## 초안
 ${renderDraft(draft)}`;
 
-const FILL_SYSTEM = `너는 개발자가 읽는 기술 블로그 초안의 빈칸 하나를 채운다. 초안을 쓸 때 입력만으로 알 수 없던 자리를 빈칸으로 남겨 글쓴이에게 물었고, 글쓴이가 그 질문에 짧게 답했다. 너는 그 답을 본문의 그 자리에 들어갈 문단으로 다듬는다. 나머지 본문은 시스템이 그대로 두므로 이 자리의 문단만 쓴다. 독자는 이 글을 사실로 믿고 읽으므로, 답에 없는 내용을 그럴듯하게 지어내지 않는다.
+const fillSystem = ({ tone }: OptionTables): string => `너는 개발자가 읽는 기술 블로그 초안의 빈칸 하나를 채운다. 초안을 쓸 때 입력만으로 알 수 없던 자리를 빈칸으로 남겨 글쓴이에게 물었고, 글쓴이가 그 질문에 짧게 답했다. 너는 그 답을 본문의 그 자리에 들어갈 문단으로 다듬는다. 나머지 본문은 시스템이 그대로 두므로 이 자리의 문단만 쓴다. 독자는 이 글을 사실로 믿고 읽으므로, 답에 없는 내용을 그럴듯하게 지어내지 않는다.
 
 ${DATA_RULE}
 
@@ -544,7 +550,7 @@ ${READER_RULE}
 ${list(tone)}`;
 
 // 빈칸 채우기 입력의 옵션 줄 (문체와 결과 언어만 쓴다)
-const fillOptionLines = (context: JobContext): string => {
+const fillOptionLines = ({ tone }: OptionTables, context: JobContext): string => {
   const options = resolveOptions(context);
   return `## 옵션
 - 결과 언어: 한국어
@@ -572,18 +578,18 @@ const retryNote = ({ kind, placeholders }: RevisionProblem): string => `## 앞�
 앞서 고친 초안은 아래 문제로 쓰지 못했다. 이번에는 이 문제 없이 고칠 점만 고친다.
 - ${retryReason[kind]}${placeholders.length ? `\n- 문제의 자리표시자: ${placeholders.join(', ')}` : ''}`;
 
-export const ko: PromptPack = {
+const build = (tables: OptionTables): PromptPack => ({
   locale: 'ko',
   dataRuleMarker,
   voiceRuleMarker,
   readerRuleMarker,
   clarifyRuleMarker,
   plan: {
-    system: PLAN_SYSTEM,
+    system: planSystem(tables),
     user: ({ context, commits, links, missingLevels }) => `## 요청
 ${tagRequest(context.prompt)}${clarificationBlock(context)}
 
-${optionLines(context)}
+${optionLines(tables, context)}
 
 ## 커밋 카탈로그
 ${orNone(renderCatalog(commits))}
@@ -598,7 +604,7 @@ ${missingLevels?.length ? `\n${missingLevelsNote(missingLevels)}\n` : ''}${conte
     user: ({ context, plan, commits, hunks, links }) => `## 요청
 ${tagRequest(context.prompt)}${clarificationBlock(context)}
 
-${optionLines(context)}
+${optionLines(tables, context)}
 
 ## 기획
 ${renderPlan(plan, new Set(hunks.map((hunk) => hunk.id)))}
@@ -615,8 +621,8 @@ ${orNone(renderLinks(links, { preview: false, roles: plan.linkRoles }))}
 위 기획의 절마다 사실, 코드 위치, 빈칸을 정리해 주세요.`,
   },
   write: {
-    system: WRITE_SYSTEM,
-    user: ({ context, plan, analysis, hunks, links }) => `${optionLines(context)}${clarificationBlock(context)}
+    system: writeSystem(tables),
+    user: ({ context, plan, analysis, hunks, links }) => `${optionLines(tables, context)}${clarificationBlock(context)}
 
 ## 글 재료
 ${renderOutline(plan, analysis, hunks)}
@@ -628,13 +634,13 @@ ${links.length ? renderLinkTitles(links, plan.linkRoles) : NONE}
   },
   review: {
     system: REVIEW_SYSTEM,
-    user: (input) => `${reviewMaterial(input)}
+    user: (input) => `${reviewMaterial(tables, input)}
 
 위 초안을 독자 기준으로 검토해 고칠 점만 정리해 주세요. 고칠 점이 없으면 빈 목록을 냅니다.`,
   },
   revise: {
-    system: REVISE_SYSTEM,
-    user: (input) => `${reviewMaterial(input)}
+    system: reviseSystem(tables),
+    user: (input) => `${reviewMaterial(tables, input)}
 
 ## 고칠 점
 ${renderIssues(input.issues)}
@@ -642,8 +648,8 @@ ${input.retry ? `\n${retryNote(input.retry)}\n` : ''}
 위 고칠 점만 고친 초안 전체를 Markdown 으로 써 주세요. 첫 줄은 \`# 제목\` 입니다.`,
   },
   fill: {
-    system: FILL_SYSTEM,
-    user: ({ context, blank, analysis }) => `${fillOptionLines(context)}
+    system: fillSystem(tables),
+    user: ({ context, blank, analysis }) => `${fillOptionLines(tables, context)}
 
 ## 지금 본문
 ${renderFillContext(blank.context)}
@@ -659,10 +665,8 @@ ${renderFillAnswer(blank.answer)}
 
 위 답을 본문의 \`${FILL_TARGET_MARKER}\` 자리에 들어갈 문단 1~3개로 다듬어 주세요.`,
   },
-  tone,
-  postType,
-  length,
-  requiredBlocks,
+  ...tables,
+  rebuild: build,
   blankDefaults,
   referencesHeading: '참고',
   reviewPatterns: [
@@ -702,4 +706,6 @@ ${renderFillAnswer(blank.answer)}
       fix: '추측하는 말투를 지우고 재료의 사실대로 단정하거나, 근거가 없으면 그 문장을 지운다.',
     },
   ],
-};
+});
+
+export const ko = build({ tone, postType, length, requiredBlocks });

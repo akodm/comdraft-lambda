@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 import type { GenerationBroadcastPayload, GenerationClarification } from './contract.ts';
 import type { ClarifyRequest } from './generation/schemas.ts';
 import { GithubApiError } from './errors.ts';
@@ -8,8 +8,9 @@ import { createClaudeFiller } from './fill.ts';
 import type { LlmClient, OnUsage } from './generation/llm.ts';
 import type { StoredAnalysis } from './generation/stored-analysis.ts';
 import type { CommitDetail } from './github.ts';
-import type { JobContext, JobStore, QuotaReservation } from './jobs.ts';
+import type { Admission, JobContext, JobStore, QuotaReservation } from './jobs.ts';
 import type { Pipeline, PipelineInput } from './pipeline.ts';
+import { getPromptPack, type PromptPack } from './prompts/index.ts';
 import { createPlaceholderPipeline } from './placeholder-pipeline.ts';
 import { MIN_REMAINING_MS, runJob, type RunJobDependencies } from './run-job.ts';
 
@@ -42,6 +43,7 @@ const commit = (sha: string, message: string): CommitDetail => ({
 const createMemoryJobs = (
   initialStatus = 'queued',
   reservation: QuotaReservation = 'reserved',
+  admission: Admission = 'ok',
 ) => {
   const state = {
     status: initialStatus,
@@ -56,6 +58,10 @@ const createMemoryJobs = (
     // 같은 초안의 최근 완료 초안 작성 작업이 저장한 분석 (loadLatestAnalysis 가 돌려줌)
     latestAnalysis: null as StoredAnalysis | null,
     clarification: null as GenerationClarification | null,
+    // 어드민 프롬프트 수정본 (loadPromptOverrides 가 돌려줌, error 가 있으면 던짐) 과 읽은 로케일
+    promptOverrides: [] as { key: string; content: string }[],
+    promptOverridesError: null as Error | null,
+    promptOverrideLocales: [] as string[],
   };
   const pauseCalls: ClarifyRequest[] = [];
 
@@ -68,7 +74,17 @@ const createMemoryJobs = (
       state.status = 'running';
       return { channel: 'channel-uuid' };
     },
+    checkAdmission: async () => admission,
     loadContext: async () => CONTEXT,
+    loadPromptOverrides: async (locale) => {
+      state.promptOverrideLocales.push(locale);
+
+      if (state.promptOverridesError) {
+        throw state.promptOverridesError;
+      }
+
+      return state.promptOverrides;
+    },
     markStep: async (_jobId, step) => {
       if (state.status !== 'running') {
         return false;
@@ -151,8 +167,13 @@ const createDependencies = (
   overrides: Partial<RunJobDependencies> = {},
   initialStatus?: string,
   reservation?: QuotaReservation,
+  admission?: Admission,
 ) => {
-  const { jobs, state, pauseCalls } = createMemoryJobs(initialStatus, reservation);
+  const { jobs, state, pauseCalls } = createMemoryJobs(
+    initialStatus,
+    reservation,
+    admission,
+  );
   const signals: GenerationBroadcastPayload[] = [];
 
   const dependencies: RunJobDependencies = {
@@ -359,6 +380,33 @@ describe('runJob', () => {
     });
   });
 
+  for (const code of ['service_paused', 'user_banned'] as const) {
+    it(`${code} 이면 GitHub·Claude 호출과 사용량 예약 없이 ${code} 로 실패한다`, async () => {
+      const { stages, pipeline } = createUsagePipeline({ classify: 1, analyze: 1, write: 1 });
+      let commitCalls = 0;
+      const { dependencies, state, signals } = createDependencies(
+        {
+          pipeline,
+          fetchCommit: async ({ sha }) => {
+            commitCalls += 1;
+            return commit(sha, 'x');
+          },
+        },
+        undefined,
+        undefined,
+        code,
+      );
+
+      assert.equal(await runJob('job-1', dependencies), 'failed');
+      assert.equal(state.status, 'failed');
+      assert.equal(state.errorCode, code);
+      assert.equal(state.estimatedCost, null);
+      assert.equal(commitCalls, 0);
+      assert.deepEqual(stages, []);
+      assert.equal(signals.at(-1)?.status, 'failed');
+    });
+  }
+
   it('작업의 초안이 삭제돼 맥락이 없으면 Claude 호출 없이 internal 로 실패한다', async () => {
     const { pipeline, stages } = createUsagePipeline({ classify: 1_000, analyze: 2_000, write: 3_000 });
     const { dependencies, state, signals } = createDependencies({ pipeline });
@@ -534,7 +582,7 @@ describe('runJob (빈칸 채우기)', () => {
     assert.equal(state.usedTokens, 700);
     assert.equal(
       state.estimatedCost,
-      filler.estimate({ context: BLANK_CONTEXT, blank: BLANK_CONTEXT.blank!, analysis: STORED, onUsage: async () => {} }),
+      filler.estimate({ context: BLANK_CONTEXT, pack: getPromptPack('ko'), blank: BLANK_CONTEXT.blank!, analysis: STORED, onUsage: async () => {} }),
     );
     // 저장한 분석과 답이 프롬프트에 들어간다
     assert.ok(calls[0].user.includes('<fact>이미지를 모두 먼저 불러왔다</fact>'));
@@ -641,6 +689,120 @@ describe('runJob (분석 저장)', () => {
     assert.equal(await runJob('job-1', dependencies), 'completed');
     assert.equal(state.status, 'completed');
     assert.equal(reported.length, 1);
+  });
+});
+
+describe('runJob (프롬프트 수정본)', () => {
+  // 준비·작성 단계가 받은 묶음을 기록하는 파이프라인
+  const packPipeline = () => {
+    const packs: PromptPack[] = [];
+    const pipeline: Pipeline = {
+      prepare: async (input) => {
+        packs.push(input.pack);
+        return {};
+      },
+      estimate: () => 1,
+      classify: async () => ({}),
+      clarification: () => null,
+      analyze: async () => ({}),
+      write: async (input) => {
+        packs.push(input.pack);
+        return '# 결과';
+      },
+      review: async () => '# 결과',
+    };
+    return { pipeline, packs };
+  };
+
+  it('작업의 로케일 수정본을 한 번만 읽어 파이프라인 모든 단계에 같은 묶음으로 넘긴다', async () => {
+    const { pipeline, packs } = packPipeline();
+    const { dependencies, state } = createDependencies({ pipeline });
+    state.promptOverrides = [{ key: 'tone.plain', content: '짧고 담백하게.' }];
+
+    assert.equal(await runJob('job-1', dependencies), 'completed');
+    assert.deepEqual(state.promptOverrideLocales, ['ko']);
+    assert.equal(packs.length, 2);
+    assert.equal(packs[0].tone.plain, '짧고 담백하게.');
+    assert.equal(packs[0], packs[1]);
+  });
+
+  it('거절된 수정본은 기본값을 쓰고 키 이름만 보고한다', async () => {
+    const { pipeline, packs } = packPipeline();
+    const reported: unknown[] = [];
+    const { dependencies, state } = createDependencies({ pipeline, reportError: (e) => reported.push(e) });
+    state.promptOverrides = [{ key: 'write.system', content: '비밀스러운 문장 규칙 없음' }];
+
+    assert.equal(await runJob('job-1', dependencies), 'completed');
+    assert.equal(packs[0].write.system, getPromptPack('ko').write.system);
+    assert.equal(reported.length, 1);
+    assert.match((reported[0] as Error).message, /write\.system/);
+    assert.doesNotMatch((reported[0] as Error).message, /비밀스러운/);
+  });
+
+  it('거절된 수정본은 console.warn 으로 작업 id 와 키 이름만 남긴다', async () => {
+    const warn = mock.method(console, 'warn', () => {});
+    try {
+      const { dependencies, state } = createDependencies({ pipeline: packPipeline().pipeline });
+      state.promptOverrides = [{ key: 'write.system', content: '비밀스러운 문장 규칙 없음' }];
+
+      await runJob('job-1', dependencies);
+
+      const lines = warn.mock.calls.map((call) => call.arguments.join(' '));
+      assert.equal(lines.length, 1);
+      assert.match(lines[0], /job-1/);
+      assert.match(lines[0], /write\.system/);
+      assert.doesNotMatch(lines[0], /비밀스러운/);
+    } finally {
+      warn.mock.restore();
+    }
+  });
+
+  it('수정본 읽기 실패는 console.warn 으로 오류 메시지만 남긴다', async () => {
+    const warn = mock.method(console, 'warn', () => {});
+    try {
+      const { dependencies, state } = createDependencies({ pipeline: packPipeline().pipeline });
+      state.promptOverridesError = new Error('connection lost');
+
+      await runJob('job-1', dependencies);
+
+      const lines = warn.mock.calls.map((call) => call.arguments.join(' '));
+      assert.equal(lines.length, 1);
+      assert.match(lines[0], /connection lost/);
+    } finally {
+      warn.mock.restore();
+    }
+  });
+
+  it('빈칸 채우기도 수정본을 받은 묶음으로 프롬프트를 만든다', async () => {
+    const { llm, calls } = createFillLlm();
+    const { dependencies, state } = createDependencies({
+      filler: createClaudeFiller({ llm }),
+    });
+    state.latestAnalysis = STORED;
+    state.promptOverrides = [{ key: 'tone.plain', content: '짧고 담백하게.' }];
+    dependencies.jobs.loadContext = async () => ({ ...BLANK_CONTEXT, tone: 'plain' });
+
+    assert.equal(await runJob('job-1', dependencies), 'completed');
+    assert.ok(calls[0].user.includes('짧고 담백하게.'));
+  });
+
+  it('수정본을 읽다 실패해도 기본 묶음으로 작업을 이어 간다', async () => {
+    const { pipeline, packs } = packPipeline();
+    const reported: unknown[] = [];
+    const { dependencies, state } = createDependencies({ pipeline, reportError: (e) => reported.push(e) });
+    state.promptOverridesError = new Error('connection lost');
+
+    assert.equal(await runJob('job-1', dependencies), 'completed');
+    assert.equal(state.status, 'completed');
+    assert.equal(packs[0], getPromptPack('ko'));
+    assert.deepEqual(reported, [state.promptOverridesError]);
+  });
+
+  it('시작 검사에서 막힌 작업은 수정본을 읽지 않는다', async () => {
+    const { dependencies, state } = createDependencies({}, undefined, undefined, 'service_paused');
+
+    assert.equal(await runJob('job-1', dependencies), 'failed');
+    assert.deepEqual(state.promptOverrideLocales, []);
   });
 });
 

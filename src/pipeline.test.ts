@@ -180,6 +180,7 @@ const run = async (
   const stored: StoredAnalysis[] = [];
   const input: PipelineInput = {
     context: { ...CONTEXT, ...options.context },
+    pack: getPromptPack(({ ...CONTEXT, ...options.context }).locale),
     commits: options.commits ?? COMMITS,
     codeInputs: options.codeInputs ?? [],
     onUsage: async ({ tokens }) => {
@@ -210,6 +211,7 @@ const prepareOnly = async (
   });
   const input: PipelineInput = {
     context: { ...CONTEXT, ...options.context },
+    pack: getPromptPack(({ ...CONTEXT, ...options.context }).locale),
     commits: COMMITS,
     codeInputs: [],
     onUsage: async () => {},
@@ -444,6 +446,7 @@ describe('createClaudePipeline', () => {
       });
       const input: PipelineInput = {
         context: { ...CONTEXT, ...context },
+        pack: getPromptPack(({ ...CONTEXT, ...context }).locale),
         commits: COMMITS,
         codeInputs: [],
         onUsage: async () => {},
@@ -655,6 +658,7 @@ describe('createClaudePipeline', () => {
     const estimateFor = async (patch: string) => {
       const input: PipelineInput = {
         context: { ...CONTEXT, referenceUrls: [] },
+        pack: getPromptPack(({ ...CONTEXT, referenceUrls: [] }).locale),
         commits: [{ ...COMMITS[1], files: [{ ...COMMITS[1].files[0], patch }] }],
         codeInputs: [],
         onUsage: async () => {},
@@ -830,7 +834,7 @@ describe('createClaudePipeline', () => {
         fetchLinks: async () => LINKS,
         remainingTimeMs: () => left,
       });
-      const input: PipelineInput = { context: CONTEXT, commits: COMMITS, codeInputs: [], onUsage: async () => {} };
+      const input: PipelineInput = { context: CONTEXT, pack: getPromptPack('ko'), commits: COMMITS, codeInputs: [], onUsage: async () => {} };
       const prepared = await pipeline.prepare(input);
       const analyzed = await pipeline.analyze(input, await pipeline.classify(input, prepared));
       const markdown = await pipeline.review(input, await pipeline.write(input, analyzed));
@@ -856,7 +860,7 @@ describe('createClaudePipeline', () => {
         fetchLinks: async () => LINKS,
         remainingTimeMs: () => 300_000,
       });
-      const input: PipelineInput = { context: CONTEXT, commits: COMMITS, codeInputs: [], onUsage: async () => {} };
+      const input: PipelineInput = { context: CONTEXT, pack: getPromptPack('ko'), commits: COMMITS, codeInputs: [], onUsage: async () => {} };
       const prepared = await pipeline.prepare(input);
       const analyzed = await pipeline.analyze(input, await pipeline.classify(input, prepared));
       const markdown = await pipeline.review(input, await pipeline.write(input, analyzed));
@@ -929,6 +933,7 @@ describe('createClaudePipeline', () => {
       let calls = 0;
       const input: PipelineInput = {
         context: CONTEXT,
+        pack: getPromptPack((CONTEXT).locale),
         commits: COMMITS,
         codeInputs: [],
         // 기획·분석·작성 호출은 통과하고 검토 호출(네 번째)에서 던진다
