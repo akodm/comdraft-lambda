@@ -4,10 +4,11 @@ import type { Context } from 'aws-lambda';
 import { createBroadcaster } from './broadcast.ts';
 import { loadConfig, type LambdaConfig } from './config.ts';
 import { parseGenerationRequest } from './contract.ts';
-import { getDatabase } from './db.ts';
+import { getDatabase, type Database } from './db.ts';
 import { createCommitFetcher } from './github.ts';
 import { createClaudeFiller } from './fill.ts';
 import { createJobStore } from './jobs.ts';
+import { publishPromptDefaults } from './prompt-defaults.ts';
 import { createLinkFetch, fetchReferenceLinks } from './generation/links.ts';
 import { createAnthropicClient } from './generation/anthropic-client.ts';
 import { createAnthropicLlm } from './generation/llm.ts';
@@ -31,6 +32,24 @@ const getAnthropicClient = (config: LambdaConfig) => {
   return anthropicClient;
 };
 
+// 프롬프트 기본값 올리기는 컨테이너당 한 번만 시작하고 기다리지 않는다.
+// 실패해도 작업에는 영향이 없고 (프롬프트 내용은 로그에 남기지 않음) 다음 콜드 스타트에 다시 시도한다.
+let defaultsPublishStarted = false;
+
+const publishDefaultsOnce = (sql: Database) => {
+  if (defaultsPublishStarted) {
+    return;
+  }
+
+  defaultsPublishStarted = true;
+  publishPromptDefaults(sql).catch((error: unknown) => {
+    console.error(
+      'prompt defaults publish failed:',
+      error instanceof Error ? error.message : 'unknown error',
+    );
+  });
+};
+
 /**
  * API Gateway(REST, IAM 인증)가 비동기(Event)로 호출하는 진입점
  * - 요청 본문: { jobId, githubToken } (API Gateway 매핑 템플릿이 본문을 그대로 이벤트로 전달)
@@ -50,6 +69,7 @@ export const handler = async (
 
   const config = loadConfig();
   const sql = getDatabase(config.databaseUrl);
+  publishDefaultsOnce(sql);
 
   // Anthropic 인증은 API 키 없이 Lambda 실행 역할로 연동 (Workload Identity Federation)
   const client = getAnthropicClient(config);
