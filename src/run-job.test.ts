@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 import type { GenerationBroadcastPayload, GenerationClarification } from './contract.ts';
 import type { ClarifyRequest } from './generation/schemas.ts';
 import { GithubApiError } from './errors.ts';
@@ -737,6 +737,40 @@ describe('runJob (프롬프트 수정본)', () => {
     assert.equal(reported.length, 1);
     assert.match((reported[0] as Error).message, /write\.system/);
     assert.doesNotMatch((reported[0] as Error).message, /비밀스러운/);
+  });
+
+  it('거절된 수정본은 console.warn 으로 작업 id 와 키 이름만 남긴다', async () => {
+    const warn = mock.method(console, 'warn', () => {});
+    try {
+      const { dependencies, state } = createDependencies({ pipeline: packPipeline().pipeline });
+      state.promptOverrides = [{ key: 'write.system', content: '비밀스러운 문장 규칙 없음' }];
+
+      await runJob('job-1', dependencies);
+
+      const lines = warn.mock.calls.map((call) => call.arguments.join(' '));
+      assert.equal(lines.length, 1);
+      assert.match(lines[0], /job-1/);
+      assert.match(lines[0], /write\.system/);
+      assert.doesNotMatch(lines[0], /비밀스러운/);
+    } finally {
+      warn.mock.restore();
+    }
+  });
+
+  it('수정본 읽기 실패는 console.warn 으로 오류 메시지만 남긴다', async () => {
+    const warn = mock.method(console, 'warn', () => {});
+    try {
+      const { dependencies, state } = createDependencies({ pipeline: packPipeline().pipeline });
+      state.promptOverridesError = new Error('connection lost');
+
+      await runJob('job-1', dependencies);
+
+      const lines = warn.mock.calls.map((call) => call.arguments.join(' '));
+      assert.equal(lines.length, 1);
+      assert.match(lines[0], /connection lost/);
+    } finally {
+      warn.mock.restore();
+    }
   });
 
   it('빈칸 채우기도 수정본을 받은 묶음으로 프롬프트를 만든다', async () => {

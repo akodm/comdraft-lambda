@@ -112,11 +112,17 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
       );
 
       if (rejected.length > 0) {
+        // 핸들러가 reportError 를 넘기지 않아도 작업 로그에 남도록 작업 id 와 키 이름만 출력
+        console.warn(`prompt overrides rejected: job=${jobId} keys=${rejected.join(',')}`);
         reportError(new Error(`rejected prompt overrides: ${rejected.join(', ')}`));
       }
 
       return pack;
     } catch (error) {
+      console.warn(
+        'prompt overrides load failed:',
+        error instanceof Error ? error.message : 'unknown error',
+      );
       reportError(error);
       return base;
     }
