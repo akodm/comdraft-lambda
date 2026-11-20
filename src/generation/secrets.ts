@@ -13,9 +13,17 @@ const SECRET_PATTERNS: RegExp[] = [
   /(?:AKIA|ASIA)[0-9A-Z]{16}/,
   /gh[pousr]_[A-Za-z0-9]{20,}/,
   /github_pat_[A-Za-z0-9_]{20,}/,
-  /xox[abpr]-[A-Za-z0-9-]+/,
+  /xox[abposr]-[A-Za-z0-9-]+/,
   /(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}/,
-  /[sr]k_live_[A-Za-z0-9]{16,}/,
+  /[sr]k_(?:live|test)_[A-Za-z0-9]{16,}/,
+  // Stripe 웹훅 서명 비밀, Supabase 시크릿 키·개인 액세스 토큰, npm 토큰
+  /whsec_[A-Za-z0-9]{16,}/,
+  /sb_secret_[A-Za-z0-9_-]{16,}/,
+  /(?<![A-Za-z0-9])sbp_[a-f0-9]{40}/,
+  /(?<![A-Za-z0-9])npm_[A-Za-z0-9]{36}/,
+  // Slack·Discord 웹훅 URL (URL 자체가 인증 수단)
+  /https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9/_-]{8,}/,
+  /https:\/\/(?:discord|discordapp)\.com\/api\/webhooks\/\d{1,32}\/[A-Za-z0-9_-]{16,}/,
   /AIza[0-9A-Za-z_-]{35}/,
   /-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----/,
   // JWT (세그먼트 길이 상한: 없으면 'eyJ' 가 반복되는 긴 입력에서 제곱 시간)
@@ -39,8 +47,29 @@ const GLOBAL_PATTERNS = SECRET_PATTERNS.map(
 export const redactSecrets = (text: string): string =>
   GLOBAL_PATTERNS.reduce((acc, pattern) => acc.replace(pattern, '[가림]'), text);
 
-// 이름만 남기고 본문은 넘기지 않는 파일 (.env*, *.pem, *.key, SSH 키 id_rsa*·id_ed25519*·id_ecdsa*·id_dsa*)
+// 이름만 남기고 본문은 넘기지 않는 파일 (.env*, *.pem, *.key, 아래 목록, SSH 키 id_rsa*·id_ed25519*·id_ecdsa*·id_dsa*)
 const SSH_KEY_PREFIXES = ['id_rsa', 'id_ed25519', 'id_ecdsa', 'id_dsa'];
+
+// 확장자·고정 이름으로 알아보는 비밀 파일 (Terraform 변수·상태, 인증서 저장소, 자격 증명 파일 등)
+const SECRET_FILE_SUFFIXES = [
+  '.tfvars',
+  '.tfvars.json',
+  '.tfstate',
+  '.tfstate.backup',
+  '.p12',
+  '.pfx',
+  '.keystore',
+  '.jks',
+];
+const SECRET_FILE_NAMES = [
+  '.npmrc',
+  '.netrc',
+  '.pgpass',
+  'credentials.json',
+  'secrets.yml',
+  'secrets.yaml',
+  '.envrc',
+];
 
 export const isSecretFile = (filename: string): boolean => {
   const base = (filename.split('/').pop() ?? filename).toLowerCase();
@@ -48,6 +77,9 @@ export const isSecretFile = (filename: string): boolean => {
     base.startsWith('.env') ||
     base.endsWith('.pem') ||
     base.endsWith('.key') ||
+    SECRET_FILE_SUFFIXES.some((suffix) => base.endsWith(suffix)) ||
+    SECRET_FILE_NAMES.includes(base) ||
+    (base.startsWith('service-account') && base.endsWith('.json')) ||
     SSH_KEY_PREFIXES.some((prefix) => base.startsWith(prefix))
   );
 };

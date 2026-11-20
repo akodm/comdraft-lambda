@@ -71,6 +71,81 @@ describe('secrets', () => {
     }
   });
 
+  it('Stripe·Supabase·Slack·Discord·npm 등 추가 토큰 형식을 찾는다', () => {
+    for (const s of [
+      'sk_test_' + 'a'.repeat(24),
+      'rk_test_' + 'a'.repeat(24),
+      'whsec_' + 'a'.repeat(32),
+      'sb_secret_' + 'a'.repeat(30),
+      'sbp_' + 'a'.repeat(40),
+      'https://hooks.slack.com/services/T000/B000/' + 'a'.repeat(24),
+      'xoxa-2-' + 'a'.repeat(12),
+      'xoxo-' + 'a'.repeat(12),
+      'xoxs-' + 'a'.repeat(12),
+      'https://discord.com/api/webhooks/123456/' + 'a'.repeat(30),
+      'https://discordapp.com/api/webhooks/123456/' + 'a'.repeat(30),
+      'npm_' + 'a'.repeat(36),
+      '-----BEGIN OPENSSH PRIVATE KEY-----',
+      '-----BEGIN ENCRYPTED PRIVATE KEY-----',
+      '-----BEGIN EC PRIVATE KEY-----',
+      '-----BEGIN DSA PRIVATE KEY-----',
+    ]) {
+      assert.equal(containsSecret(s), true, s);
+      assert.equal(redactSecrets(s).includes('aaaaaa'), false, s);
+    }
+  });
+
+  it('UUID, git SHA, base64 데이터는 비밀로 보지 않는다', () => {
+    for (const s of [
+      'id: 123e4567-e89b-12d3-a456-426614174000',
+      'commit 9b59902c1f2e3d4a5b6c7d8e9f00112233445566',
+      'const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";',
+      'const sbp = computeSbpValue(1);',
+      'https://hooks.example.com/services/abc',
+      'npm_config_cache=1',
+    ]) {
+      assert.equal(containsSecret(s), false, s);
+    }
+  });
+
+  it('추가 비밀 파일 이름', () => {
+    for (const f of [
+      'infra/terraform.tfvars',
+      'prod.auto.tfvars.json',
+      'terraform.tfstate',
+      'terraform.tfstate.backup',
+      '.npmrc',
+      'apps/web/.NPMRC',
+      '.netrc',
+      '.pgpass',
+      'credentials.json',
+      'config/Credentials.json',
+      'service-account.json',
+      'service-account-prod.json',
+      'certs/client.p12',
+      'client.PFX',
+      'release.keystore',
+      'app/release.jks',
+      'secrets.yml',
+      'deploy/secrets.yaml',
+      '.envrc',
+    ]) {
+      assert.equal(isSecretFile(f), true, f);
+    }
+    for (const f of [
+      'terraform.tfvars.example',
+      'main.tf',
+      'credentials.ts',
+      'service-account.ts',
+      'docs/secrets.md',
+      'src/npmrc.ts',
+    ]) {
+      assert.equal(isSecretFile(f), false, f);
+    }
+    // 기존 동작: .env 로 시작하면 템플릿(.env.example)도 이름만 남긴다
+    assert.equal(isSecretFile('.env.example'), true);
+  });
+
   it('redactSecrets 는 비밀 부분만 가린다', () => {
     assert.equal(
       redactSecrets('fix: key ghp_' + 'a'.repeat(36) + ' 제거, db postgres://u:p@h/x 도'),
