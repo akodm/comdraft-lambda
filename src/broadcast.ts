@@ -18,10 +18,13 @@ export const createBroadcaster = ({
   supabaseUrl,
   publishableKey,
   fetchImpl = fetch,
+  onError = () => {},
 }: {
   supabaseUrl: string;
   publishableKey: string;
   fetchImpl?: typeof fetch;
+  // 전송 실패 보고 (작업은 계속)
+  onError?: (error: unknown) => void;
 }): SendSignal => {
   return async (channel, payload) => {
     try {
@@ -47,8 +50,13 @@ export const createBroadcaster = ({
         },
       );
 
+      if (!response.ok) {
+        onError(new Error(`Realtime Broadcast 전송 실패 (${response.status})`));
+      }
+
       return response.ok;
-    } catch {
+    } catch (error) {
+      onError(error);
       return false;
     }
   };

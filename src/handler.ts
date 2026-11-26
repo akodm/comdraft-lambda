@@ -13,7 +13,11 @@ import { createLinkFetch, fetchReferenceLinks } from './generation/links.ts';
 import { createAnthropicClient } from './generation/anthropic-client.ts';
 import { createAnthropicLlm } from './generation/llm.ts';
 import { createClaudePipeline } from './pipeline.ts';
+import { createReporter, flushObservability, initObservability } from './observability.ts';
 import { runJob, type RunJobOutcome } from './run-job.ts';
+
+// 콜드 스타트에 한 번 (SENTRY_DSN 이 없으면 꺼짐)
+initObservability();
 
 // 같은 실행 환경(웜 스타트)에서는 클라이언트를 재사용해 교환한 Anthropic 토큰을 캐시로 씀
 let anthropicClient: Anthropic | null = null;
@@ -43,10 +47,7 @@ const publishDefaultsOnce = (sql: Database) => {
 
   defaultsPublishStarted = true;
   publishPromptDefaults(sql).catch((error: unknown) => {
-    console.error(
-      'prompt defaults publish failed:',
-      error instanceof Error ? error.message : 'unknown error',
-    );
+    createReporter({ stage: 'publish_prompt_defaults' })(error);
   });
 };
 
@@ -67,6 +68,25 @@ export const handler = async (
     return { outcome: 'invalid_request' };
   }
 
+  // 요청 본문(토큰·코드)은 보고에 싣지 않고 작업 id 만
+  const reportError = createReporter({ jobId: request.jobId });
+
+  try {
+    return await execute(request, context, reportError);
+  } catch (error) {
+    // runJob 밖에서 난 오류 (설정 누락, DB 연결, 실패 기록 자체의 실패 등): 작업은 Next.js 가 시간 초과로 정리
+    reportError(error, { stage: 'handler' });
+    throw error;
+  } finally {
+    await flushObservability();
+  }
+};
+
+const execute = async (
+  request: NonNullable<ReturnType<typeof parseGenerationRequest>>,
+  context: Context,
+  reportError: ReturnType<typeof createReporter>,
+): Promise<{ outcome: RunJobOutcome }> => {
   const config = loadConfig();
   const sql = getDatabase(config.databaseUrl);
   publishDefaultsOnce(sql);
@@ -83,16 +103,19 @@ export const handler = async (
     signal: createBroadcaster({
       supabaseUrl: config.supabaseUrl,
       publishableKey: config.supabasePublishableKey,
+      onError: (error) => reportError(error, { stage: 'broadcast' }),
     }),
     fetchCommit: createCommitFetcher(request.githubToken),
     pipeline: createClaudePipeline({
       llm,
       fetchLinks: (urls) => fetchReferenceLinks(urls, linkFetch),
       remainingTimeMs,
+      reportError,
     }),
     // 빈칸 채우기 작업은 GitHub 토큰을 쓰지 않는다
     filler: createClaudeFiller({ llm }),
     remainingTimeMs,
+    reportError,
     codeInputs: request.codeInputs,
   });
 

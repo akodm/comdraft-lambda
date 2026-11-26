@@ -108,8 +108,8 @@ export interface ClaudePipelineDependencies {
   fetchLinks: (urls: string[]) => Promise<PreparedLink[]>;
   // Lambda 남은 실행 시간 (검토·고쳐 쓰기를 건너뛸지 정함)
   remainingTimeMs: () => number;
-  // 검토 단계 실패 보고 (없으면 조용히 넘어감)
-  reportError?: (error: unknown) => void;
+  // 검토 단계 실패 보고 (없으면 조용히 넘어감, 작업은 원래 초안으로 계속)
+  reportError?: (error: unknown, context?: Record<string, string | number | undefined>) => void;
 }
 
 // 단계별 출력 상한 (호출의 모델·사고 깊이는 작업 모델로 stagePlan 이 정한다)
@@ -337,7 +337,10 @@ export const createClaudePipeline = ({
           const check = checkRevision(draft, revised, linkIds);
 
           if ('problem' in check) {
-            reportError?.(new GenerationFailure('invalid_result'));
+            reportError?.(
+              new GenerationFailure('invalid_result', { reason: `revision_${check.problem.kind}` }),
+              { stage: 'revise_check', attempt },
+            );
             retry = check.problem;
             continue;
           }
@@ -346,7 +349,7 @@ export const createClaudePipeline = ({
           try {
             assembled = assemble({ ...assembleInput, markdown: check.markdown });
           } catch (error) {
-            reportError?.(error);
+            reportError?.(error, { stage: 'assemble_revised' });
           }
           break;
         }
@@ -356,7 +359,7 @@ export const createClaudePipeline = ({
         throw error;
       }
 
-      reportError?.(error);
+      reportError?.(error, { stage: 'review', ...error.detail });
     }
 
     // 원래 초안을 조립하지 못하면 작업이 실패해야 하므로 어떤 대체 처리도 두지 않는다

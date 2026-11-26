@@ -54,6 +54,19 @@ variable "anthropic_workspace_id" {
   default     = ""
 }
 
+# Sentry 오류 보고 (comdraft-lambda 프로젝트의 DSN, 빈 값이면 보내지 않음)
+variable "sentry_dsn" {
+  description = "Sentry DSN (comdraft-lambda 프로젝트, Sentry > Settings > Projects > Client Keys)"
+  type        = string
+  default     = ""
+}
+
+variable "sentry_environment" {
+  description = "Sentry environment 이름"
+  type        = string
+  default     = "production"
+}
+
 variable "lambda_timeout_seconds" {
   description = "Lambda 실행 시간 제한 초 (기본 720 = 12분, 높은 모델의 호출 제한을 담는다. Next.js lib/generation/contract.ts 의 GENERATION_LAMBDA_TIMEOUT_MS 와 맞출 것)"
   type        = number

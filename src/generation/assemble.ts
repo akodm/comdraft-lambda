@@ -43,8 +43,8 @@ interface Store {
   cited: Set<string>;
 }
 
-const fail = (): never => {
-  throw new GenerationFailure('invalid_result');
+const fail = (reason = 'assemble_rejected'): never => {
+  throw new GenerationFailure('invalid_result', { reason });
 };
 
 const evidenceCorpus = (input: AssembleInput): string => {
@@ -400,9 +400,9 @@ const layOut = (escaped: string): string => tidy(neutralizeLines(escaped));
 const normalizeHeadings = (text: string): string => {
   const lines = text.split('\n');
   const first = lines.findIndex((line) => line.trim() !== '');
-  if (first < 0 || !/^ {0,3}#[ \t]+\S/.test(lines[first])) return fail();
+  if (first < 0 || !/^ {0,3}#[ \t]+\S/.test(lines[first])) return fail('no_title');
   const body = lines.slice(first + 1);
-  if (!body.some((line) => line.trim() !== '')) return fail();
+  if (!body.some((line) => line.trim() !== '')) return fail('empty_body');
   const lowered = body.map((line) => line.replace(/^( {0,3})#(?=[ \t])/, '$1##'));
   return [...lines.slice(0, first + 1), ...liftHeadings(lowered)].join('\n');
 };
@@ -439,7 +439,12 @@ export const assemble = (input: AssembleInput): string => {
   try {
     return assembleUnsafe(input);
   } catch (error) {
-    throw error instanceof GenerationFailure ? error : new GenerationFailure('invalid_result');
+    throw error instanceof GenerationFailure
+      ? error
+      : new GenerationFailure('invalid_result', {
+          reason: 'unexpected',
+          errorClass: error instanceof Error ? error.name : typeof error,
+        });
   }
 };
 
@@ -456,7 +461,7 @@ const assembleUnsafe = (input: AssembleInput): string => {
   let laidOut = layOut(escaped);
   if (hasViolation(laidOut)) {
     laidOut = layOut(flatten(escaped));
-    if (hasViolation(laidOut)) fail();
+    if (hasViolation(laidOut)) fail('layout_violation');
   }
   const checked = normalizeHeadings(laidOut);
   const resolved = checked.replace(
@@ -556,7 +561,12 @@ export const sanitizeFill = (markdown: string, evidence: string): string => {
   try {
     return sanitizeFillUnsafe(markdown, evidence);
   } catch (error) {
-    throw error instanceof GenerationFailure ? error : new GenerationFailure('invalid_result');
+    throw error instanceof GenerationFailure
+      ? error
+      : new GenerationFailure('invalid_result', {
+          reason: 'unexpected',
+          errorClass: error instanceof Error ? error.name : typeof error,
+        });
   }
 };
 
@@ -581,6 +591,6 @@ const sanitizeFillUnsafe = (markdown: string, evidence: string): string => {
     .filter((paragraph) => paragraph !== '')
     .slice(0, MAX_FILL_PARAGRAPHS);
   const text = paragraphs.join('\n\n');
-  if (text === '' || !isParagraphsOnly(text)) fail();
+  if (text === '' || !isParagraphsOnly(text)) fail('fill_not_paragraphs');
   return text.replace(SPAN_MARKER, (_whole, span: string) => store.spans[Number(span)]);
 };

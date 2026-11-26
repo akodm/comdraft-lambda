@@ -8,7 +8,7 @@ import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
 import type { z } from 'zod';
 
 import { GENERATION_MODEL_IDS, type GenerationModel } from '../contract.ts';
-import { GenerationFailure } from '../errors.ts';
+import { GenerationFailure, type FailureDetail } from '../errors.ts';
 import { usageCost, type StageCall, type UsageTokens } from './models.ts';
 
 // 요청 하나의 모델별 제한 시간 (Lambda 전체 제한 720초보다 짧게, 사고 깊이 medium·high 에서 출력 32,000토큰을 받을 수 있게)
@@ -75,8 +75,32 @@ const toUsageTokens = (usage: Anthropic.Usage): UsageTokens => ({
   cacheRead: usage.cache_read_input_tokens ?? 0,
 });
 
-const fail = () => new GenerationFailure('llm_failed');
-const timeout = () => new GenerationFailure('timeout');
+// 실패 이유는 Sentry 에서 구분하도록 이름만 붙인다 (응답 원문은 넣지 않음)
+const fail = (reason: string, detail: FailureDetail = {}) =>
+  new GenerationFailure('llm_failed', { reason, ...detail });
+const timeout = (reason: string, detail: FailureDetail = {}) =>
+  new GenerationFailure('timeout', { reason, ...detail });
+
+// SDK 오류에서 원인 식별자만 꺼냄 (메시지·응답 본문은 버림)
+const apiErrorDetail = (model: GenerationModel, error: unknown): FailureDetail => {
+  const detail: FailureDetail = {
+    llmModel: model,
+    errorClass: error instanceof Error ? error.name : typeof error,
+  };
+
+  if (error instanceof APIError) {
+    if (typeof error.status === 'number') detail.llmStatus = error.status;
+    if (typeof error.requestID === 'string') detail.llmRequestId = error.requestID;
+    const body: unknown = error.error;
+    const type =
+      typeof body === 'object' && body !== null && 'error' in body
+        ? (body.error as { type?: unknown } | null)?.type
+        : undefined;
+    if (typeof type === 'string') detail.llmErrorType = type;
+  }
+
+  return detail;
+};
 
 // 이번 호출에 쓸 수 있는 시간: 호출 하나의 제한과 (남은 시간 - 여유분) 중 짧은 쪽
 const callBudget = (model: GenerationModel, remainingMs: number): number =>
@@ -101,7 +125,7 @@ interface RequestOptions {
 // 거절·토큰 초과는 결과를 믿을 수 없으므로 실패로 본다
 const assertCompleted = (stopReason: string | null) => {
   if (stopReason === 'refusal' || stopReason === 'max_tokens') {
-    throw fail();
+    throw fail(stopReason);
   }
 };
 
@@ -121,7 +145,7 @@ const callWithDeadline = async <T>(
   for (let attempt = 0; ; attempt += 1) {
     const budget = callBudget(model, remainingTimeMs());
     if (budget <= MIN_CALL_MS) {
-      throw timeout();
+      throw timeout('no_call_budget', { llmModel: model });
     }
 
     const controller = new AbortController();
@@ -136,9 +160,9 @@ const callWithDeadline = async <T>(
         (shortened && error instanceof APIConnectionTimeoutError)
       ) {
         // 남은 시간 때문에 줄인 기한에 걸렸으면 시간 초과, 원래 제한 시간에 걸렸으면 일시 오류로 본다
-        if (shortened) throw timeout();
+        if (shortened) throw timeout('call_deadline', { llmModel: model });
       } else if (!isRetryable(error)) {
-        throw fail();
+        throw fail('api_error', apiErrorDetail(model, error));
       }
 
       const canRetry =
@@ -146,7 +170,7 @@ const callWithDeadline = async <T>(
         callBudget(model, remainingTimeMs() - RETRY_DELAY_MS) >=
           LLM_TIMEOUT_MS_BY_MODEL[model];
       if (!canRetry) {
-        throw fail();
+        throw fail(attempt === 0 ? 'no_retry_time' : 'retry_failed', apiErrorDetail(model, error));
       }
     } finally {
       clearTimeout(timer);
@@ -233,13 +257,13 @@ export const createAnthropicLlm = (
     // SDK 와 같이 첫 text 블록을 결과로 본다 (thinking 블록은 건너뜀)
     const text = message.content.find((block) => block.type === 'text')?.text;
     if (text == null) {
-      throw fail();
+      throw fail('no_text');
     }
     // JSON·스키마 오류 원문에는 응답 내용이 섞일 수 있어 사유 코드만 남김
     try {
       return format.parse(text);
     } catch {
-      throw fail();
+      throw fail('schema_mismatch');
     }
   },
 
@@ -269,7 +293,7 @@ export const createAnthropicLlm = (
       .map((block) => (block.type === 'text' ? block.text : ''))
       .join('');
     if (text.trim() === '') {
-      throw fail();
+      throw fail('empty_text');
     }
     return text;
   },
