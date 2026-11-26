@@ -15,5 +15,8 @@ anthropic_service_account_id = "svac_..."
 # 규칙이 워크스페이스 하나만 허용하면 빈 값
 anthropic_workspace_id = ""
 
+# Sentry 오류 보고 (comdraft-lambda 프로젝트의 DSN, 빈 값이면 보내지 않음)
+sentry_dsn = "https://<key>@<org>.ingest.us.sentry.io/<project-id>"
+
 # 일일 현황 보고를 받을 이메일 (적용 후 AWS 확인 메일의 링크를 눌러야 전달 시작)
 daily_report_email = "you@example.com"

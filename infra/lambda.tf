@@ -65,6 +65,9 @@ resource "aws_lambda_function" "generation" {
       ANTHROPIC_ORGANIZATION_ID    = var.anthropic_organization_id
       ANTHROPIC_SERVICE_ACCOUNT_ID = var.anthropic_service_account_id
       ANTHROPIC_WORKSPACE_ID       = var.anthropic_workspace_id
+      # 오류 보고 (CloudWatch Logs 대신, 빈 값이면 보내지 않음)
+      SENTRY_DSN         = var.sentry_dsn
+      SENTRY_ENVIRONMENT = var.sentry_environment
     }
   }
 }

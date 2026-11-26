@@ -26,6 +26,7 @@ Next.js 서버 (comdraft) ──SigV4──▶ API Gateway (REST, IAM 인증, �
 
 - DB 접근: `service_setting`(AI 중지), `ai_prompt`(프롬프트 수정본), `user.banned_at`·`user.quota_reset_at` 을 읽고, 콜드 스타트 때 프롬프트 기본값을 `ai_prompt_default` 에 올립니다(쓰기).
 - 커밋 코드, 직접 입력 코드, 참고 링크 본문은 메모리에서만 쓰고 DB, 로그 어디에도 저장하지 않습니다.
+- 오류는 Sentry 로만 보냅니다(`src/observability.ts`). 실패한 단계(`stage`), 사유 코드(`errorCode`), 이유(`reason`), 작업 id·종류·모델, 외부 API 상태 코드만 태그로 붙이고, SDK 의 자동 수집(헤더·본문·지역 변수 등)은 모두 끄며 메시지의 토큰 형태는 가립니다. 할당량 초과·밴·AI 중지·재로그인처럼 규칙에 따른 실패는 보내지 않습니다.
 - 사용하지 않는 AWS 서비스: Step Functions, VPC, CloudWatch Logs(실행 역할에 `logs:*` 권한 없음), SQS (SNS 는 comdraft 의 일일 현황 보고 메일에만 씀)
 - 요청/신호 형식과 오류 코드는 comdraft 의 `lib/generation/contract.ts` 와 이 저장소의 `src/contract.ts` 를 같게 유지합니다.
 
@@ -75,6 +76,8 @@ Lambda 환경 변수는 Terraform(`infra/lambda.tf`)이 주입함. 값은 git �
 | `ANTHROPIC_ORGANIZATION_ID` | `anthropic_organization_id` | Anthropic 조직 ID |
 | `ANTHROPIC_SERVICE_ACCOUNT_ID` | `anthropic_service_account_id` | 연동 규칙이 가리키는 서비스 계정 ID (`svac_...`) |
 | `ANTHROPIC_WORKSPACE_ID` | `anthropic_workspace_id` | 워크스페이스 ID (규칙이 워크스페이스 하나만 허용하면 빈 값) |
+| `SENTRY_DSN` | `sentry_dsn` | Sentry 오류 보고 DSN (comdraft-lambda 프로젝트, 빈 값이면 보내지 않음) |
+| `SENTRY_ENVIRONMENT` | `sentry_environment` | Sentry environment (기본 `production`) |
 
 Anthropic 인증은 API 키 없이 **Workload Identity Federation** 을 씀. Lambda 가 실행 역할로 AWS STS `GetWebIdentityToken` 을 호출해 받은 JWT 를 Anthropic 단기 토큰으로 교환함(SDK 가 캐시와 갱신을 처리). 위 값들은 모두 비밀값이 아닌 ID 이고, `ANTHROPIC_API_KEY` 는 쓰지 않음(설정돼 있으면 혼동의 원인이 되므로 넣지 말 것).
 

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it, mock } from 'node:test';
 import type { GenerationBroadcastPayload, GenerationClarification } from './contract.ts';
 import type { ClarifyRequest } from './generation/schemas.ts';
-import { GithubApiError } from './errors.ts';
+import { GenerationFailure, GithubApiError } from './errors.ts';
 import { FILL_TARGET_MARKER } from './contract.ts';
 import { createClaudeFiller } from './fill.ts';
 import type { LlmClient, OnUsage } from './generation/llm.ts';
@@ -12,7 +12,12 @@ import type { Admission, JobContext, JobStore, QuotaReservation } from './jobs.t
 import type { Pipeline, PipelineInput } from './pipeline.ts';
 import { getPromptPack, type PromptPack } from './prompts/index.ts';
 import { createPlaceholderPipeline } from './placeholder-pipeline.ts';
-import { MIN_REMAINING_MS, runJob, type RunJobDependencies } from './run-job.ts';
+import {
+  MIN_REMAINING_MS,
+  runJob,
+  type ReportContext,
+  type RunJobDependencies,
+} from './run-job.ts';
 
 const CONTEXT: JobContext = {
   kind: 'draft',
@@ -879,5 +884,95 @@ describe('runJob (직접 입력 코드)', () => {
     assert.equal(await runJob('job-1', dependencies), 'completed');
     assert.equal(fetched, 0);
     assert.deepEqual(received[0].commits, []);
+  });
+});
+
+describe('runJob (오류 보고)', () => {
+  const capture = () => {
+    const reports: { error: unknown; context: ReportContext | undefined }[] = [];
+    return {
+      reports,
+      reportError: (error: unknown, context?: ReportContext) => {
+        reports.push({ error, context });
+      },
+    };
+  };
+
+  it('실패한 단계와 사유 코드, 부가 정보, 작업 종류·모델을 붙여 보고한다', async () => {
+    const { reports, reportError } = capture();
+    const { pipeline } = createUsagePipeline({ classify: 1, analyze: 1, write: 1 });
+    pipeline.analyze = async () => {
+      throw new GenerationFailure('llm_failed', { reason: 'api_error', llmStatus: 529 });
+    };
+    const { dependencies } = createDependencies({ pipeline, reportError });
+
+    assert.equal(await runJob('job-1', dependencies), 'failed');
+    assert.equal(reports.length, 1);
+    assert.deepEqual(reports[0].context, {
+      stage: 'analyze',
+      step: 1,
+      kind: 'draft',
+      model: 'haiku',
+      locale: 'ko',
+      errorCode: 'llm_failed',
+      reason: 'api_error',
+      llmStatus: 529,
+    });
+  });
+
+  it('GitHub 일시 오류는 커밋 조회 단계와 상태 코드를 붙여 보고한다', async () => {
+    const { reports, reportError } = capture();
+    const { dependencies, state } = createDependencies({
+      reportError,
+      fetchCommit: async () => {
+        throw new GithubApiError(502);
+      },
+    });
+
+    assert.equal(await runJob('job-1', dependencies), 'failed');
+    assert.equal(state.errorCode, 'github_unavailable');
+    assert.equal(reports[0].context?.stage, 'fetch_commits');
+    assert.equal(reports[0].context?.githubStatus, 502);
+  });
+
+  it('예상하지 못한 오류는 internal 로 바꾸고 오류 종류를 붙여 보고한다', async () => {
+    const { reports, reportError } = capture();
+    const { pipeline } = createUsagePipeline({ classify: 1, analyze: 1, write: 1 }, 'write');
+    const { dependencies } = createDependencies({ pipeline, reportError });
+
+    assert.equal(await runJob('job-1', dependencies), 'failed');
+    assert.equal(reports[0].context?.stage, 'write');
+    assert.equal(reports[0].context?.errorCode, 'internal');
+    assert.equal(reports[0].context?.errorClass, 'Error');
+  });
+
+  it('할당량 초과·밴·AI 중지·재로그인은 오류가 아니라 보고하지 않는다', async () => {
+    const cases: Array<[Partial<RunJobDependencies>, QuotaReservation | undefined, Admission | undefined]> = [
+      [{}, 'exceeded', undefined],
+      [{}, undefined, 'user_banned'],
+      [{}, undefined, 'service_paused'],
+      [
+        {
+          fetchCommit: async () => {
+            throw new GithubApiError(401);
+          },
+        },
+        undefined,
+        undefined,
+      ],
+    ];
+
+    for (const [overrides, reservation, admission] of cases) {
+      const { reports, reportError } = capture();
+      const { dependencies } = createDependencies(
+        { ...overrides, reportError },
+        undefined,
+        reservation,
+        admission,
+      );
+
+      assert.equal(await runJob('job-1', dependencies), 'failed');
+      assert.equal(reports.length, 0);
+    }
   });
 });

@@ -1,4 +1,9 @@
-import type { GenerationCodeInput, GenerationStatus, GenerationStep } from './contract.ts';
+import type {
+  GenerationCodeInput,
+  GenerationErrorCode,
+  GenerationStatus,
+  GenerationStep,
+} from './contract.ts';
 import type { SendSignal } from './broadcast.ts';
 import { GenerationFailure, toGenerationFailure } from './errors.ts';
 import { matchesCodeInputMeta } from './generation/code-input.ts';
@@ -13,6 +18,37 @@ import { applyOverrides } from './prompts/overrides.ts';
 // 다음 단계를 시작하기 위해 남아 있어야 하는 실행 시간 (부족하면 스스로 실패 처리 후 종료)
 export const MIN_REMAINING_MS = 30_000;
 
+// 오류 보고에 붙이는 식별자 (단계 이름, 작업 종류·모델, 실패 사유와 그 부가 정보만)
+export type ReportContext = Record<string, string | number | undefined>;
+export type ReportError = (error: unknown, context?: ReportContext) => void;
+
+// 오류가 아니라 정해진 규칙에 따른 실패 (사용자 상태·할당량·운영 설정) → 보고하지 않음
+const EXPECTED_FAILURES: ReadonlySet<GenerationErrorCode> = new Set([
+  'quota_exceeded',
+  'user_banned',
+  'service_paused',
+  'github_reauth',
+  'cancelled',
+]);
+
+// 어느 지점에서 실패했는지 (Sentry 의 stage 태그)
+export type JobStage =
+  | 'start'
+  | 'admission'
+  | 'load_context'
+  | 'load_prompts'
+  | 'fetch_commits'
+  | 'prepare'
+  | 'reserve_quota'
+  | 'classify'
+  | 'pause_for_input'
+  | 'analyze'
+  | 'save_analysis'
+  | 'write'
+  | 'review'
+  | 'fill'
+  | 'complete';
+
 export interface RunJobDependencies<P = unknown, C = unknown, A = unknown, W = unknown> {
   jobs: JobStore;
   signal: SendSignal;
@@ -22,8 +58,8 @@ export interface RunJobDependencies<P = unknown, C = unknown, A = unknown, W = u
   filler: BlankFiller;
   // Lambda 남은 실행 시간 (context.getRemainingTimeInMillis)
   remainingTimeMs: () => number;
-  // 실패 원인 보고 (Sentry 연동 전까지는 아무것도 하지 않음)
-  reportError?: (error: unknown) => void;
+  // 실패 원인 보고 (핸들러가 Sentry 로 보냄, 테스트에서는 생략)
+  reportError?: ReportError;
   // 요청 본문으로 받은 직접 입력 코드 (초안 작성에만 쓰고 저장하지 않음)
   codeInputs: GenerationCodeInput[];
 }
@@ -43,7 +79,7 @@ const assertReserved = (reservation: QuotaReservation) => {
   }
 
   if (reservation === 'no_plan') {
-    throw new GenerationFailure('internal');
+    throw new GenerationFailure('internal', { reason: 'no_quota_plan' });
   }
 };
 
@@ -78,12 +114,18 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
   }
 
   let step: GenerationStep = 0;
+  let stage: JobStage = 'start';
+  // 작업 맥락을 읽은 뒤 채움 (보고마다 붙임)
+  let jobTags: ReportContext = {};
+  const report = (error: unknown, extra: ReportContext = {}) =>
+    reportError(error, { stage, step, ...jobTags, ...extra });
+
   const notify = (status: GenerationStatus) =>
     signal(started.channel, { jobId, status, step });
 
   const ensureTime = () => {
     if (remainingTimeMs() < MIN_REMAINING_MS) {
-      throw new GenerationFailure('timeout');
+      throw new GenerationFailure('timeout', { reason: 'remaining_time' });
     }
   };
 
@@ -114,7 +156,7 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
       if (rejected.length > 0) {
         // 핸들러가 reportError 를 넘기지 않아도 작업 로그에 남도록 작업 id 와 키 이름만 출력
         console.warn(`prompt overrides rejected: job=${jobId} keys=${rejected.join(',')}`);
-        reportError(new Error(`rejected prompt overrides: ${rejected.join(', ')}`));
+        report(new Error(`rejected prompt overrides: ${rejected.join(', ')}`));
       }
 
       return pack;
@@ -123,7 +165,7 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
         'prompt overrides load failed:',
         error instanceof Error ? error.message : 'unknown error',
       );
-      reportError(error);
+      report(error);
       return base;
     }
   };
@@ -131,7 +173,7 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
   // 빈칸 채우기: 결과 Markdown 문단
   const runFill = async (context: JobContext, pack: PromptPack): Promise<string> => {
     if (!context.blank) {
-      throw new GenerationFailure('internal');
+      throw new GenerationFailure('internal', { reason: 'missing_blank' });
     }
 
     const input = {
@@ -142,8 +184,10 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
       onUsage,
     };
 
+    stage = 'reserve_quota';
     assertReserved(await jobs.reserveQuota(jobId, filler.estimate(input)));
     ensureTime();
+    stage = 'fill';
     return filler.fill(input);
   };
 
@@ -151,9 +195,10 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
   const runDraft = async (context: JobContext, pack: PromptPack): Promise<DraftRun | null> => {
     // 받은 코드가 이 작업에 저장된 이름·줄 수와 다르면(없음, 잘못된 재실행) 다른 코드로 쓰지 않도록 멈춘다
     if (!context.codeInputMeta || !matchesCodeInputMeta(codeInputs, context.codeInputMeta)) {
-      throw new GenerationFailure('internal');
+      throw new GenerationFailure('internal', { reason: 'code_input_mismatch' });
     }
 
+    stage = 'fetch_commits';
     const input: PipelineInput = {
       context,
       pack,
@@ -169,23 +214,27 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
         try {
           await jobs.saveAnalysis(jobId, analysis);
         } catch (error) {
-          reportError(error);
+          report(error, { stage: 'save_analysis' });
         }
       },
     };
 
     ensureTime();
+    stage = 'prepare';
     const prepared = await pipeline.prepare(input);
+    stage = 'reserve_quota';
     assertReserved(
       await jobs.reserveQuota(jobId, pipeline.estimate(input, prepared)),
     );
 
     // 준비 단계에서 참고 링크를 가져오느라 시간을 썼을 수 있어 다시 확인
     ensureTime();
+    stage = 'classify';
     const classified = await pipeline.classify(input, prepared);
     const clarify = pipeline.clarification(classified);
 
     if (clarify) {
+      stage = 'pause_for_input';
       return (await jobs.pauseForInput(jobId, clarify)) ? { kind: 'paused' } : null;
     }
 
@@ -194,6 +243,7 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
     }
 
     ensureTime();
+    stage = 'analyze';
     const analyzed = await pipeline.analyze(input, classified);
 
     if (!(await advance(2))) {
@@ -201,7 +251,9 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
     }
 
     ensureTime();
+    stage = 'write';
     const written = await pipeline.write(input, analyzed);
+    stage = 'review';
     // 검토는 시간이 부족하면 스스로 건너뛰므로 앞에서 따로 확인하지 않는다 (단계 표시도 완료 전까지 2 유지)
     return {
       kind: 'result',
@@ -212,6 +264,7 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
 
   try {
     // 시작 검사: AI 중지나 사용자 밴이면 GitHub·Claude 호출과 사용량 예약 없이 바로 실패
+    stage = 'admission';
     const admission = await jobs.checkAdmission(jobId);
 
     if (admission !== 'ok') {
@@ -219,12 +272,15 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
     }
 
     await notify('running');
+    stage = 'load_context';
     const context = await jobs.loadContext(jobId);
 
     if (!context) {
-      throw new GenerationFailure('internal');
+      throw new GenerationFailure('internal', { reason: 'missing_context' });
     }
 
+    jobTags = { kind: context.kind, model: context.model, locale: context.locale };
+    stage = 'load_prompts';
     const pack = await loadPack(context);
 
     const run: DraftRun | null =
@@ -245,9 +301,10 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
     const result = run.markdown;
 
     if (!result.trim()) {
-      throw new GenerationFailure('invalid_result');
+      throw new GenerationFailure('invalid_result', { reason: 'empty_result' });
     }
 
+    stage = 'complete';
     if (!(await jobs.complete(jobId, result, run.tags))) {
       return 'cancelled';
     }
@@ -256,9 +313,14 @@ export const runJob = async <P = unknown, C = unknown, A = unknown, W = unknown>
     await notify('completed');
     return 'completed';
   } catch (error) {
-    reportError(error);
+    const failure = toGenerationFailure(error);
 
-    if (await jobs.fail(jobId, toGenerationFailure(error).code)) {
+    // 정해진 규칙에 따른 실패(할당량·밴·중지·재로그인)는 오류가 아니라 보고하지 않음
+    if (!EXPECTED_FAILURES.has(failure.code)) {
+      report(error, { errorCode: failure.code, ...failure.detail });
+    }
+
+    if (await jobs.fail(jobId, failure.code)) {
       await notify('failed');
     }
 
