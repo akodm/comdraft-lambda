@@ -1,0 +1,12 @@
+# gitleaks 가 잡지만 실제 비밀값이 아닌 항목 (테스트·문서의 가짜 값)
+# 형식: 커밋:파일:규칙:줄. 새 가짜 값은 해당 줄에 gitleaks:allow 주석을 다는 편이 낫다.
+065a5c3e574365c9d6526be0c54d37528e2c2590:src/generation/secrets.test.ts:private-key:83
+19a95a0464a5087475e851992651cef4a9a14b58:src/generation/secrets.test.ts:aws-access-token:65
+19a95a0464a5087475e851992651cef4a9a14b58:src/generation/secrets.test.ts:generic-api-key:34
+19a95a0464a5087475e851992651cef4a9a14b58:src/generation/secrets.test.ts:generic-api-key:37
+19a95a0464a5087475e851992651cef4a9a14b58:src/generation/secrets.test.ts:generic-api-key:38
+19a95a0464a5087475e851992651cef4a9a14b58:src/generation/secrets.test.ts:generic-api-key:39
+40dee68142df5a823083b852b8ed21f84b51d98f:src/generation/secrets.test.ts:private-key:88
+6fca673ccbecfb9d2367fd07a229e7f19852fd38:src/generation/secrets.test.ts:generic-api-key:108
+fb469713cc1d80c52df23e040112c8cec5d280df:src/generation/secrets.test.ts:aws-access-token:8
+fb469713cc1d80c52df23e040112c8cec5d280df:src/generation/secrets.test.ts:generic-api-key:15
